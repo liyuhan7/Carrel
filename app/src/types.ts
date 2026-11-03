@@ -1,3 +1,5 @@
+import type { Anchor, ContentLink, Resource } from './shared/contracts/content'
+
 export type FileKind = 'pdf' | 'md' | 'image' | 'other'
 
 export interface FileRec {
@@ -283,6 +285,12 @@ export interface PersistedState {
   notes: Note[]
   annotations: Annotation[]
   messages: ChatMessage[]
+  /** Unified content identity; see shared/contracts/content.ts. */
+  resources: Record<string, Resource>
+  /** Persisted positions referenced by annotations and links. */
+  anchors: Record<string, Anchor>
+  /** Explicit relations only; never inferred from similarity. */
+  links: Record<string, ContentLink>
   connections: ProviderConnection[]
   activeModel: ActiveModel
   workspace: WorkspaceState

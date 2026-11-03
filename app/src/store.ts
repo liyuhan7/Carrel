@@ -11,6 +11,13 @@ import {
 import { extractPageTexts, loadPdf, renderPageImage, type PageImage } from './lib/pdf'
 import { parseAnswer } from './lib/verify'
 import { uid } from './lib/format'
+import type {
+  AnchorService, LinkService, NavigationService, ResourceRegistry, StateTransactionService
+} from './shared/contracts/content'
+import {
+  createAnchorService, createLinkService, createNavigationService, createResourceRegistry,
+  createTransactionService, type SharedDataPort
+} from './shared/services'
 
 export type View = 'home' | 'workspace' | 'library' | 'notes'
 
@@ -31,6 +38,12 @@ interface Store extends PersistedState {
   settingsOpen: boolean
   settingsConnection: string | null
   rewrite: RewriteState | null
+  /** Shared content services; see shared/services/. */
+  resourceRegistry: ResourceRegistry
+  anchorService: AnchorService
+  linkService: LinkService
+  navigation: NavigationService
+  transactions: StateTransactionService
 
   hydrate: () => Promise<void>
   openSettings: (connectionId?: string) => void
@@ -93,6 +106,11 @@ interface Store extends PersistedState {
   stopAnswer: () => void
   handleAIEvent: (event: { type: string; reqId: string; delta?: string; text?: string; message?: string; stopped?: boolean }) => void
   focusComposer: () => void
+  // >>> integration:unified-content-index
+  /** Search hit target: the AI pane scrolls this message into view. */
+  messageFocus: { messageId: string; nonce: number } | null
+  focusMessage: (messageId: string) => void
+  // <<< integration:unified-content-index
 }
 
 const SYSTEM_PROMPT = `你是 Carrel 的学习助手，服务对象是正在阅读课程资料的大学生。
@@ -129,6 +147,9 @@ function snapshot (state: Store): PersistedState {
     notes: state.notes,
     annotations: state.annotations,
     messages: state.messages,
+    resources: state.resources,
+    anchors: state.anchors,
+    links: state.links,
     connections: state.connections.map(({ hasKey: _hasKey, ...rest }) => rest),
     activeModel: state.activeModel,
     workspace: state.workspace
@@ -177,11 +198,46 @@ export const useStore = create<Store>((set, get) => {
   }
   ;(globalThis as unknown as { __csFlush: () => Promise<void> }).__csFlush = flush
 
+  const sharedPort: SharedDataPort = {
+    read: () => ({ resources: get().resources, anchors: get().anchors, links: get().links }),
+    write: (next) => {
+      set({ resources: next.resources, anchors: next.anchors, links: next.links })
+      persist()
+    },
+    // Annotations are migrated to anchorId by the reading module; tolerate both shapes.
+    isAnchorUsed: (anchorId) =>
+      get().annotations.some((item) => (item as { anchorId?: string }).anchorId === anchorId),
+    now: () => Date.now(),
+    nextId: () => uid()
+  }
+  const resourceRegistry = createResourceRegistry(sharedPort)
+  const anchorService = createAnchorService(sharedPort)
+  const linkService = createLinkService(sharedPort)
+  const transactions = createTransactionService(sharedPort)
+  const navigation = createNavigationService(sharedPort, {
+    async openDocument (sourceId, location) {
+      if (!get().files.some((item) => item.id === sourceId)) throw new Error('来源文件不可访问')
+      if (!get().workspace.tabs.includes(sourceId)) await get().openFile(sourceId)
+      if (location?.page) get().setPage(sourceId, location.page)
+      if (location?.quote) get().focusOn(sourceId, location.page ?? 1, location.quote)
+    },
+    openNote (sourceId) {
+      get().selectNote(sourceId)
+      set({ view: 'notes' })
+    },
+    openConversation () {
+      set({ view: 'workspace' })
+    }
+  })
+
   return {
     files: [],
     notes: [],
     annotations: [],
     messages: [],
+    resources: {},
+    anchors: {},
+    links: {},
     connections: DEFAULT_CONNECTIONS,
     activeModel: DEFAULT_ACTIVE_MODEL,
     workspace: {
@@ -194,6 +250,11 @@ export const useStore = create<Store>((set, get) => {
       readerPanel: 'doc',
       attachPageImage: false
     },
+    resourceRegistry,
+    anchorService,
+    linkService,
+    navigation,
+    transactions,
     hydrated: false,
     view: 'home',
     saveStatus: 'saved',
@@ -205,6 +266,9 @@ export const useStore = create<Store>((set, get) => {
     settingsOpen: false,
     settingsConnection: null,
     rewrite: null,
+    // >>> integration:unified-content-index
+    messageFocus: null,
+    // <<< integration:unified-content-index
 
     openSettings: (connectionId) => set({ settingsOpen: true, settingsConnection: connectionId ?? get().activeModel.connectionId }),
     closeSettings: () => set({ settingsOpen: false, settingsConnection: null }),
@@ -232,6 +296,9 @@ export const useStore = create<Store>((set, get) => {
           notes: state.notes ?? [],
           annotations: state.annotations ?? [],
           messages: state.messages ?? [],
+          resources: state.resources ?? {},
+          anchors: state.anchors ?? {},
+          links: state.links ?? {},
           workspace: { ...defaults, ...state.workspace },
           connections: connections.map((item) => withAuth(item, auth[item.id])),
           activeModel,
@@ -884,7 +951,10 @@ export const useStore = create<Store>((set, get) => {
       }
     },
 
-    focusComposer: () => set((s) => ({ composerFocus: s.composerFocus + 1 }))
+    focusComposer: () => set((s) => ({ composerFocus: s.composerFocus + 1 })),
+    // >>> integration:unified-content-index
+    focusMessage: (messageId) => set({ messageFocus: { messageId, nonce: Date.now() }, view: 'workspace' })
+    // <<< integration:unified-content-index
   }
 })
 

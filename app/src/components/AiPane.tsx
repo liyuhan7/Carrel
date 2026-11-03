@@ -232,6 +232,15 @@ function Message ({ message }: { message: ChatMessage }) {
   const setReaderPanel = useStore((s) => s.setReaderPanel)
   const insertAnswerToNote = useStore((s) => s.insertAnswerToNote)
   const notify = useStore((s) => s.notify)
+  // >>> integration:unified-content-index
+  const messageFocus = useStore((s) => s.messageFocus)
+  const rootRef = useRef<HTMLDivElement>(null)
+  const focused = messageFocus?.messageId === message.id
+  useEffect(() => {
+    if (!focused) return
+    rootRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+  }, [focused, messageFocus?.nonce])
+  // <<< integration:unified-content-index
 
   const isUser = message.role === 'user'
   const citations = message.citations ?? []
@@ -259,7 +268,8 @@ function Message ({ message }: { message: ChatMessage }) {
   }
 
   return (
-    <div className={`msg msg-${message.role}`}>
+    // >>> integration:unified-content-index
+    <div ref={rootRef} className={`msg msg-${message.role}${focused ? ' is-focused' : ''}`}>
       <div className="msg-head">
         {isUser ? null : <span className="msg-who">{`${message.providerName ?? 'AI'}${message.model ? ` · ${message.model}` : ''}`}</span>}
         {message.contextLabel ? <span className="msg-context">{message.contextLabel}</span> : null}
@@ -290,5 +300,6 @@ function Message ({ message }: { message: ChatMessage }) {
         </div>
       ) : null}
     </div>
+    // <<< integration:unified-content-index
   )
 }

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 
 export function Popover ({ trigger, children, align = 'left', width = 240 }: {
   trigger: (open: boolean) => ReactNode
@@ -8,6 +8,7 @@ export function Popover ({ trigger, children, align = 'left', width = 240 }: {
 }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!open) return
@@ -25,13 +26,26 @@ export function Popover ({ trigger, children, align = 'left', width = 240 }: {
     }
   }, [open])
 
+  // Flip above the trigger when the menu would fall outside the window; the
+  // composer sits at the bottom edge, so a downward menu is otherwise clipped.
+  useLayoutEffect(() => {
+    if (!open) return
+    const wrap = ref.current
+    const menu = menuRef.current
+    if (!wrap || !menu) return
+    const rect = wrap.getBoundingClientRect()
+    const spaceBelow = window.innerHeight - rect.bottom
+    const spaceAbove = rect.top
+    menu.classList.toggle('is-up', spaceBelow < menu.offsetHeight + 12 && spaceAbove > spaceBelow)
+  }, [open])
+
   return (
     <div className="popover-wrap" ref={ref}>
       <button type="button" className="popover-trigger" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
         {trigger(open)}
       </button>
       {open && (
-        <div className={`popover popover-${align}`} style={{ width }} role="menu">
+        <div ref={menuRef} className={`popover popover-${align}`} style={{ width }} role="menu">
           {children}
         </div>
       )}

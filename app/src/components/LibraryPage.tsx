@@ -3,7 +3,7 @@ import { useStore } from '../store'
 import type { FileKind, FileRec, Note } from '../types'
 import { formatBytes, formatTime } from '../lib/format'
 import { TypeBadge } from './TypeBadge'
-import { PdfThumb } from './PdfThumb'
+import { FilePreview } from './FilePreview'
 
 const TYPES: { id: 'all' | FileKind; label: string }[] = [
   { id: 'all', label: '全部' },
@@ -176,24 +176,32 @@ export function LibraryPage () {
 
               {selected ? (
                 <aside className="library-detail">
-                  <PdfThumb file={selected} width={300} className="detail-thumb" />
-                  <h2 className="detail-title">{selected.name}</h2>
+                  <FilePreview file={selected} width={360} fill className="detail-thumb" />
+                  <h2 className="detail-title" title={selected.name}>
+                    {selected.name.split(/(?<=[_.\-/])/).map((part, index) => (
+                      <span key={index}>{part}<wbr /></span>
+                    ))}
+                  </h2>
                   <dl className="detail-meta">
                     <div><dt>类型</dt><dd>{selected.ext.toUpperCase()}</dd></div>
                     <div><dt>大小</dt><dd>{formatBytes(selected.size)}</dd></div>
-                    <div><dt>页数</dt><dd>{selected.pageCount || 1}</dd></div>
+                    {selected.kind === 'pdf' ? (
+                      <div><dt>页数</dt><dd>{selected.pageCount || 1}</dd></div>
+                    ) : null}
                     <div><dt>最近打开</dt><dd>{formatTime(selected.lastOpenedAt)}</dd></div>
                   </dl>
-                  <div className="detail-progress">
-                    <div className="progress" role="progressbar" aria-valuenow={Math.round((((workspace.pages[selected.id] ?? 1) / (selected.pageCount || 1)) * 100))} aria-valuemin={0} aria-valuemax={100}>
-                      <span style={{ width: `${Math.round((((workspace.pages[selected.id] ?? 1) / (selected.pageCount || 1)) * 100))}%` }} />
+                  {selected.kind === 'pdf' ? (
+                    <div className="detail-progress">
+                      <div className="progress" role="progressbar" aria-valuenow={Math.round((((workspace.pages[selected.id] ?? 1) / (selected.pageCount || 1)) * 100))} aria-valuemin={0} aria-valuemax={100}>
+                        <span style={{ width: `${Math.round((((workspace.pages[selected.id] ?? 1) / (selected.pageCount || 1)) * 100))}%` }} />
+                      </div>
+                      <span className="detail-progress-label">
+                        第 {workspace.pages[selected.id] ?? 1} 页 / 共 {selected.pageCount || 1} 页
+                      </span>
                     </div>
-                    <span className="detail-progress-label">
-                      第 {workspace.pages[selected.id] ?? 1} 页 / 共 {selected.pageCount || 1} 页
-                    </span>
-                  </div>
+                  ) : null}
                   <button type="button" className="btn btn-primary btn-block" onClick={() => void openFromLibrary(selected.id)}>
-                    打开阅读
+                    {selected.kind === 'pdf' ? '打开阅读' : selected.kind === 'md' ? '打开文档' : selected.kind === 'image' ? '查看图片' : '打开文件'}
                   </button>
 
                   <section className="detail-notes">

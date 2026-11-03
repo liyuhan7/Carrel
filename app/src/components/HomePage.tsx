@@ -1,7 +1,7 @@
 import { useStore } from '../store'
 import { formatTime, greeting } from '../lib/format'
 import { TypeBadge } from './TypeBadge'
-import { PdfThumb } from './PdfThumb'
+import { FilePreview } from './FilePreview'
 
 const plain = (body: string) => body.replace(/[#>*`\n\-[\]()]/g, ' ').replace(/\s+/g, ' ').trim()
 
@@ -38,7 +38,7 @@ export function HomePage () {
 
       {active ? (
         <section className="continue-card">
-          <PdfThumb file={active} width={196} className="continue-thumb" />
+          <FilePreview file={active} width={196} className="continue-thumb" />
           <div className="continue-main">
             <p className="eyebrow">CONTINUE READING</p>
             <h2>{active.name}</h2>

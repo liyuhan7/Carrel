@@ -4,7 +4,6 @@ import { NoteEditor } from './NoteEditor'
 import { formatTime, truncate } from '../lib/format'
 // >>> integration:note-capture-editing
 import { NoteModuleHost, NoteTabs } from '../notes/NoteModuleHost'
-import { SourceInsertButton } from '../notes/SourceInsertButton'
 // <<< integration:note-capture-editing
 
 const plain = (body: string) => body.replace(/[#>*`\n\-[\]()]/g, ' ').replace(/\s+/g, ' ').trim()
@@ -29,19 +28,19 @@ export function NotesPage () {
       {/* >>> integration:note-capture-editing */}
       <NoteModuleHost />
       {/* <<< integration:note-capture-editing */}
-      <div className="page-head">
+      <header className="page-head">
         <div>
+          <p className="eyebrow">NOTES</p>
           <h1>笔记</h1>
         </div>
         {/* >>> integration:note-capture-editing */}
         <div className="row">
-          <SourceInsertButton />
           <button type="button" className="btn btn-primary" onClick={() => createNote()}>
             新建笔记
           </button>
         </div>
         {/* <<< integration:note-capture-editing */}
-      </div>
+      </header>
 
       {/* >>> integration:note-capture-editing */}
       <NoteTabs />

@@ -6,6 +6,8 @@ const fsp = require('node:fs/promises')
 const { pathToFileURL } = require('node:url')
 const store = require('./store.cjs')
 const ai = require('./ai.cjs')
+const oauth = require('./oauth.cjs')
+const subscriptions = require('./subscriptions.cjs')
 
 const DIST = path.join(__dirname, '..', 'dist')
 const DEV_URL = process.env.CS_DEV_URL
@@ -79,12 +81,47 @@ function createWindow () {
 }
 
 function registerIpc () {
-  ipcMain.handle('app:state', () => {
+  const authFor = async (route) => {
+    if (route.authMethod === 'oauth') {
+      const credential = await oauth.getAccessToken(route.connectionId)
+      const headers = { authorization: `Bearer ${credential}` }
+      if (route.projectId) headers['x-goog-user-project'] = route.projectId
+      return { credential, headers }
+    }
+    if (route.authMethod === 'external-cli' || route.authMethod === 'copilot') {
+      return subscriptions.getAuth(route)
+    }
+    return { credential: await store.getSecret(route.connectionId) }
+  }
+
+  const authSnapshot = async () => {
     const state = store.loadState()
-    const keys = {}
-    for (const provider of state?.providers || []) keys[provider.id] = store.hasSecret(provider.id)
-    return { state, keys, version: app.getVersion() }
-  })
+    const auth = {}
+    for (const item of state?.connections || state?.providers || []) {
+      const [token, hasClient, subscription] = await Promise.all([
+        oauth.status(item.id),
+        oauth.hasClientSecret(item.id),
+        subscriptions.status(item.id)
+      ])
+      auth[item.id] = {
+        hasKey: store.hasSecret(item.id),
+        hasOAuth: token.connected,
+        hasOAuthClient: hasClient,
+        oauthExpiresAt: token.expiresAt,
+        hasSubscription: subscription.connected,
+        subscriptionAccount: subscription.account,
+        subscriptionExpiresAt: subscription.expiresAt
+      }
+    }
+    return auth
+  }
+
+  ipcMain.handle('app:state', async () => ({
+    state: store.loadState(),
+    auth: await authSnapshot(),
+    version: app.getVersion()
+  }))
+  ipcMain.handle('auth:state', () => authSnapshot())
 
   ipcMain.handle('app:save', (_event, state) => store.saveState(state))
   ipcMain.on('app:flushed', () => {
@@ -126,18 +163,86 @@ function registerIpc () {
 
   ipcMain.handle('secret:set', (_event, id, key) => store.setSecret(id, key))
   ipcMain.handle('secret:clear', (_event, id) => store.clearSecret(id))
+  ipcMain.handle('oauth:client', (_event, id, secret) => oauth.setClientSecret(id, secret))
+
+  ipcMain.handle('models:list', async (_event, payload) => {
+    const route = {
+      connectionId: payload.connectionId,
+      protocol: payload.protocol,
+      baseUrl: payload.baseUrl,
+      authMethod: payload.authMethod,
+      projectId: payload.projectId,
+      modelId: ''
+    }
+    try {
+      const auth = payload.apiKey ? { credential: payload.apiKey } : await authFor(route)
+      return await ai.listModels(route, auth)
+    } catch (err) {
+      return { ok: false, models: [], message: err?.message || '拉取模型失败' }
+    }
+  })
+
+  ipcMain.handle('oauth:begin', async (_event, payload) => {
+    try {
+      const clientSecret = payload.clientSecret || (await oauth.getClientSecret(payload.connectionId))
+      return await oauth.begin({
+        connectionId: payload.connectionId,
+        oauth: payload.oauth,
+        clientId: payload.clientId,
+        clientSecret
+      })
+    } catch (err) {
+      return { ok: false, message: err?.message || '授权失败' }
+    }
+  })
+  ipcMain.handle('oauth:signout', async (_event, id) => {
+    await oauth.signout(id)
+    return true
+  })
+
+  ipcMain.handle('subscription:detect', (_event, sources) => {
+    const result = {}
+    for (const source of sources || []) result[source] = subscriptions.detect(source)
+    return result
+  })
+  ipcMain.handle('subscription:import', async (_event, connectionId, source) => {
+    try {
+      return await subscriptions.importFromCli(connectionId, source)
+    } catch (err) {
+      return { ok: false, message: err?.message || '导入失败' }
+    }
+  })
+  ipcMain.handle('subscription:signout', async (_event, id) => {
+    await subscriptions.signout(id)
+    return true
+  })
+  ipcMain.handle('copilot:begin', async () => {
+    try {
+      return { ok: true, ...(await subscriptions.copilotBegin()) }
+    } catch (err) {
+      return { ok: false, message: err?.message || '无法开始 GitHub 登录' }
+    }
+  })
+  ipcMain.handle('copilot:poll', async (_event, connectionId, deviceCode) => {
+    try {
+      return await subscriptions.copilotPoll(connectionId, deviceCode)
+    } catch (err) {
+      return { status: 'error', message: err?.message || 'Copilot 授权失败' }
+    }
+  })
 
   ipcMain.handle('ai:test', async (_event, payload) => {
-    const apiKey = payload.apiKey || (await store.getSecret(payload.provider.id))
-    if (!apiKey) return { ok: false, message: '请先填写 API Key' }
-    return ai.testConnection({ provider: payload.provider, apiKey })
+    const auth = payload.apiKey
+      ? { credential: payload.apiKey }
+      : await authFor(payload.route).catch(() => null)
+    return ai.testConnection(payload.route, auth)
   })
 
   ipcMain.handle('ai:start', (event, reqId, payload) => {
     const emit = (channel, data) => {
       if (!event.sender.isDestroyed()) event.sender.send(channel, data)
     }
-    ai.start(reqId, payload, store.getSecret, emit)
+    ai.start(reqId, payload, authFor, emit)
     return true
   })
   ipcMain.handle('ai:cancel', (_event, reqId) => ai.cancel(reqId))

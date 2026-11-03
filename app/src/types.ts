@@ -70,18 +70,198 @@ export interface ChatMessage {
   fileId?: string
   page?: number
   error?: string
+  /** True when the request carried a rendered page image. */
+  withImage?: boolean
 }
 
-export type ProviderKind = 'openai' | 'anthropic' | 'demo'
+// ─── provider configuration ────────────────────────────────────────────────
 
-export interface Provider {
+export type Protocol = 'openai-chat' | 'openai-responses' | 'anthropic-messages' | 'google-generate-content' | 'demo'
+
+export type AuthMethod = 'api-key' | 'oauth' | 'external-cli' | 'copilot' | 'none'
+
+/** Local clients whose credential store we can import from. */
+export type CredentialSource = 'claude-code' | 'codex'
+
+export type InputModality = 'text' | 'image'
+
+/** Capabilities the chat pipeline can actually act on today. */
+export type ModelCapability = 'tools' | 'reasoning' | 'web-search'
+
+export interface ModelPreset {
   id: string
   name: string
-  kind: ProviderKind
+  /** Wire id when it differs from the catalog id. */
+  apiModelId?: string
+  contextWindow?: number
+  input?: InputModality[]
+  capabilities?: ModelCapability[]
+}
+
+/** OAuth endpoints for a provider that publishes an official app flow. */
+export interface OAuthPreset {
+  authorizationEndpoint: string
+  tokenEndpoint: string
+  revokeEndpoint?: string
+  scopes: string[]
+  /** Shipped public client id; empty means the user supplies their own. */
+  clientId?: string
+  /** Some providers still require the app secret at the token endpoint. */
+  clientSecretRequired?: boolean
+  extraAuthParams?: Record<string, string>
+}
+
+export interface ProviderPreset {
+  id: string
+  name: string
+  protocol: Protocol
   baseUrl: string
-  model: string
+  auth: AuthMethod[]
+  oauth?: OAuthPreset
+  /** CLI credential stores this connection may import from. */
+  sources?: CredentialSource[]
+  /** GitHub Copilot device-flow login. */
+  copilot?: boolean
+  /** Where the model list comes from; registry-only providers skip the network. */
+  modelList?: 'api' | 'registry'
+  models: ModelPreset[]
+}
+
+/** One configured provider instance. The same preset can back several of them. */
+export interface ProviderConnection {
+  id: string
+  presetId: string
+  name: string
+  protocol: Protocol
+  baseUrl: string
+  authMethod: AuthMethod
+  oauthClientId?: string
+  /** Google Cloud project used for OAuth quota (`x-goog-user-project`). */
+  oauthProjectId?: string
+  enabledModelIds: string[]
+  defaultModelId?: string
+  /** Credential state reported by the main process, never the secret itself. */
   hasKey?: boolean
-  builtin?: boolean
+  hasOAuth?: boolean
+  hasOAuthClient?: boolean
+  oauthExpiresAt?: number
+  hasSubscription?: boolean
+  subscriptionAccount?: string
+  subscriptionExpiresAt?: number
+  /** Models returned by the provider's list endpoint, merged with the catalog. */
+  models?: ModelDescriptor[]
+  modelsFetchedAt?: number
+}
+
+export interface ModelDescriptor {
+  connectionId: string
+  modelId: string
+  apiModelId?: string
+  displayName: string
+  contextWindow?: number
+  input: InputModality[]
+  capabilities: ModelCapability[]
+  provenance: 'preset' | 'discovered' | 'user'
+}
+
+export interface ActiveModel {
+  connectionId: string
+  modelId: string
+}
+
+/** What the main process needs to run one request. */
+export interface ModelRoute {
+  connectionId: string
+  modelId: string
+  protocol: Protocol
+  baseUrl: string
+  authMethod: AuthMethod
+  /** Quota project for Google OAuth requests. */
+  projectId?: string
+}
+
+// ─── requests ──────────────────────────────────────────────────────────────
+
+export type MessagePart =
+  | { type: 'text'; text: string }
+  | { type: 'image'; mediaType: string; data: string }
+
+export interface AIMessage {
+  role: 'user' | 'assistant'
+  content: string | MessagePart[]
+}
+
+export interface AIPayload {
+  route: ModelRoute
+  system: string
+  messages: AIMessage[]
+  demoText?: string
+}
+
+export interface TestPayload {
+  route: ModelRoute
+  apiKey?: string
+}
+
+export interface ListModelsPayload {
+  connectionId: string
+  protocol: Protocol
+  baseUrl: string
+  authMethod: AuthMethod
+  projectId?: string
+  apiKey?: string
+}
+
+export interface RemoteModel {
+  id: string
+  name?: string
+}
+
+export interface OAuthBeginPayload {
+  connectionId: string
+  oauth: OAuthPreset
+  clientId?: string
+  clientSecret?: string
+}
+
+export interface ProviderAuthState {
+  hasKey: boolean
+  hasOAuth: boolean
+  hasOAuthClient: boolean
+  oauthExpiresAt?: number
+  hasSubscription: boolean
+  subscriptionAccount?: string
+  subscriptionExpiresAt?: number
+}
+
+export interface SourceDetection {
+  found: boolean
+  account?: string
+  expiresAt?: number
+  file?: string
+}
+
+export interface DeviceCode {
+  ok: boolean
+  message?: string
+  deviceCode?: string
+  userCode?: string
+  verificationUri?: string
+  interval?: number
+  expiresIn?: number
+}
+
+// ─── note rewrite ──────────────────────────────────────────────────────────
+
+export interface RewriteState {
+  reqId: string
+  noteId: string
+  start: number
+  end: number
+  original: string
+  text: string
+  status: 'streaming' | 'done' | 'error'
+  error?: string
 }
 
 export type ContextScope = 'selection' | 'page' | 'file'
@@ -94,6 +274,8 @@ export interface WorkspaceState {
   activeNoteId: string | null
   contextScope: ContextScope
   readerPanel: 'doc' | 'ann'
+  /** Send a rendered page image along with the text when the model accepts it. */
+  attachPageImage: boolean
 }
 
 export interface PersistedState {
@@ -101,25 +283,9 @@ export interface PersistedState {
   notes: Note[]
   annotations: Annotation[]
   messages: ChatMessage[]
-  providers: Provider[]
-  activeProviderId: string
+  connections: ProviderConnection[]
+  activeModel: ActiveModel
   workspace: WorkspaceState
-}
-
-export const DEFAULT_PROVIDERS: Provider[] = [
-  { id: 'demo', name: '演示模式', kind: 'demo', baseUrl: '', model: '本地演示', builtin: true },
-  { id: 'deepseek', name: 'DeepSeek', kind: 'openai', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat', builtin: true },
-  { id: 'openai', name: 'OpenAI', kind: 'openai', baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini', builtin: true },
-  { id: 'glm', name: '智谱 GLM', kind: 'openai', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4-flash', builtin: true },
-  { id: 'kimi', name: 'Kimi', kind: 'openai', baseUrl: 'https://api.moonshot.cn/v1', model: 'moonshot-v1-8k', builtin: true },
-  { id: 'anthropic', name: 'Claude', kind: 'anthropic', baseUrl: 'https://api.anthropic.com/v1', model: 'claude-sonnet-4-5', builtin: true }
-]
-
-export interface AIPayload {
-  provider: Provider
-  system: string
-  messages: { role: 'user' | 'assistant'; content: string }[]
-  demoText?: string
 }
 
 export interface AIEvent {
@@ -132,7 +298,7 @@ export interface AIEvent {
 }
 
 export interface Bridge {
-  getState(): Promise<{ state: PersistedState | null; keys: Record<string, boolean>; version: string }>
+  getState(): Promise<{ state: PersistedState | null; auth: Record<string, ProviderAuthState>; version: string }>
   saveState(state: PersistedState): Promise<void>
   pickFiles(): Promise<string[]>
   probe(path: string): Promise<{ path: string; name: string; ext: string; size: number; mtime: number; hash: string }>
@@ -144,7 +310,17 @@ export interface Bridge {
   getText(fileId: string): Promise<string[] | null>
   setKey(id: string, key: string): Promise<void>
   clearKey(id: string): Promise<void>
-  testProvider(payload: { provider: Provider; apiKey?: string }): Promise<{ ok: boolean; message: string }>
+  setOAuthClient(id: string, secret: string): Promise<void>
+  authState(): Promise<Record<string, ProviderAuthState>>
+  testProvider(payload: TestPayload): Promise<{ ok: boolean; message: string }>
+  listModels(payload: ListModelsPayload): Promise<{ ok: boolean; models: RemoteModel[]; message: string }>
+  oauthBegin(payload: OAuthBeginPayload): Promise<{ ok: boolean; message: string }>
+  oauthSignout(id: string): Promise<void>
+  subscriptionDetect(sources: CredentialSource[]): Promise<Record<string, SourceDetection>>
+  subscriptionImport(id: string, source: CredentialSource): Promise<{ ok: boolean; message: string }>
+  subscriptionSignout(id: string): Promise<void>
+  copilotBegin(): Promise<DeviceCode>
+  copilotPoll(id: string, deviceCode: string): Promise<{ status: 'pending' | 'ok' | 'error'; message?: string; account?: string }>
   startAI(reqId: string, payload: AIPayload): Promise<boolean>
   cancelAI(reqId: string): Promise<void>
   onAI(cb: (event: AIEvent) => void): () => void

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import { useStore } from '../store'
 import type { ChatMessage, ContextScope } from '../types'
+import { activeRoute, authReady, modelOptions, supportsImage } from '../lib/providers'
 import { renderAnswer } from '../lib/markdown'
 import { Popover } from './Popover'
 
@@ -17,8 +18,8 @@ export function AiPane ({ collapsed, onExpand, onCollapse }: {
 }) {
   const messages = useStore((s) => s.messages)
   const streaming = useStore((s) => s.streaming)
-  const providers = useStore((s) => s.providers)
-  const activeProviderId = useStore((s) => s.activeProviderId)
+  const connections = useStore((s) => s.connections)
+  const activeModel = useStore((s) => s.activeModel)
   const workspace = useStore((s) => s.workspace)
   const files = useStore((s) => s.files)
   const selection = useStore((s) => s.selection)
@@ -26,7 +27,8 @@ export function AiPane ({ collapsed, onExpand, onCollapse }: {
   const sendQuestion = useStore((s) => s.sendQuestion)
   const stopAnswer = useStore((s) => s.stopAnswer)
   const setContextScope = useStore((s) => s.setContextScope)
-  const setActiveProvider = useStore((s) => s.setActiveProvider)
+  const setActiveModel = useStore((s) => s.setActiveModel)
+  const setAttachPageImage = useStore((s) => s.setAttachPageImage)
   const setSelection = useStore((s) => s.setSelection)
   const openSettings = useStore((s) => s.openSettings)
 
@@ -36,7 +38,8 @@ export function AiPane ({ collapsed, onExpand, onCollapse }: {
 
   const activeFile = files.find((file) => file.id === workspace.activeTab)
   const page = activeFile ? workspace.pages[activeFile.id] ?? 1 : 1
-  const provider = providers.find((item) => item.id === activeProviderId) ?? providers[0]
+  const active = activeRoute(connections, activeModel)
+  const options = modelOptions(connections)
   const scope = workspace.contextScope
   const last = messages[messages.length - 1]
 
@@ -73,24 +76,30 @@ export function AiPane ({ collapsed, onExpand, onCollapse }: {
         <span className="pane-title">AI 学习助手</span>
         <Popover
           align="right"
-          width={280}
-          trigger={() => <span className="model-chip">{provider?.name ?? '模型'} · {provider?.kind === 'demo' ? '本地' : provider?.model}</span>}
+          width={300}
+          trigger={() => (
+            <span className="model-chip">
+              {active ? `${active.connection.name} · ${active.model.displayName}` : '选择模型'}
+            </span>
+          )}
         >
-          {providers.map((item) => (
+          {options.map(({ connection, model }) => (
             <button
-              key={item.id}
+              key={`${connection.id}/${model.modelId}`}
               type="button"
-              className={`menu-item${item.id === activeProviderId ? ' is-active' : ''}`}
+              className={`menu-item${connection.id === active?.connection.id && model.modelId === active.model.modelId ? ' is-active' : ''}`}
               onClick={() => {
-                if (item.kind !== 'demo' && !item.hasKey) {
-                  openSettings(item.id)
+                if (!authReady(connection)) {
+                  openSettings(connection.id)
                   return
                 }
-                setActiveProvider(item.id)
+                setActiveModel(connection.id, model.modelId)
               }}
             >
-              <span className="menu-name">{item.name}</span>
-              <span className="menu-meta">{item.kind === 'demo' ? '本地演示' : item.hasKey ? item.model : '未配置'}</span>
+              <span className="menu-name">{model.displayName}</span>
+              <span className="menu-meta">
+                {authReady(connection) ? connection.name : `${connection.name} · 未配置`}
+              </span>
             </button>
           ))}
           <div className="menu-sep" />
@@ -174,6 +183,16 @@ export function AiPane ({ collapsed, onExpand, onCollapse }: {
           />
           <div className="composer-foot">
             <div className="composer-meta">
+              {activeFile?.kind === 'pdf' && supportsImage(active?.model) ? (
+                <label className="image-toggle">
+                  <input
+                    type="checkbox"
+                    checked={workspace.attachPageImage}
+                    onChange={(event) => setAttachPageImage(event.target.checked)}
+                  />
+                  附本页截图
+                </label>
+              ) : null}
               <Popover align="left" width={230} trigger={() => <span className="scope-btn">{SCOPE_LABEL[scope]}</span>}>
                 {(['selection', 'page', 'file'] as ContextScope[]).map((item) => (
                   <button
@@ -187,7 +206,7 @@ export function AiPane ({ collapsed, onExpand, onCollapse }: {
                   </button>
                 ))}
               </Popover>
-              <span className="muted">{provider?.name}</span>
+              <span className="muted">{active?.connection.name}</span>
             </div>
             {streaming ? (
               <button type="button" className="btn btn-small" onClick={stopAnswer}>

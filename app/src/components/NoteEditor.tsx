@@ -15,8 +15,15 @@ export function NoteEditor ({ note, variant }: { note: Note; variant: 'pane' | '
   const selection = useStore((s) => s.selection)
   const insertSelectionToNote = useStore((s) => s.insertSelectionToNote)
   const saveStatus = useStore((s) => s.saveStatus)
+  const rewrite = useStore((s) => s.rewrite)
+  const startRewrite = useStore((s) => s.startRewrite)
+  const cancelRewrite = useStore((s) => s.cancelRewrite)
+  const applyRewrite = useStore((s) => s.applyRewrite)
 
   const [mode, setMode] = useState<'edit' | 'preview'>('edit')
+  const [panel, setPanel] = useState(false)
+  const [instruction, setInstruction] = useState('润色，保持原意')
+  const [range, setRange] = useState<{ start: number; end: number; text: string } | null>(null)
   const areaRef = useRef<HTMLTextAreaElement>(null)
   const previewRef = useRef<HTMLDivElement>(null)
 
@@ -34,6 +41,24 @@ export function NoteEditor ({ note, variant }: { note: Note; variant: 'pane' | '
       area.focus()
       area.setSelectionRange(start + before.length, start + before.length + selected.length)
     })
+  }
+
+  const openRewrite = () => {
+    const area = areaRef.current
+    if (!area) return
+    const start = area.selectionStart
+    const end = area.selectionEnd
+    const text = note.body.slice(start, end)
+    if (!text.trim()) {
+      notify('先在笔记里选中要整理的片段', 'error')
+      return
+    }
+    if (text.includes('csref:')) {
+      notify('选区包含来源锚点，请缩小范围', 'error')
+      return
+    }
+    setRange({ start, end, text })
+    setPanel(true)
   }
 
   const openRef = async (refId: string) => {
@@ -102,10 +127,74 @@ export function NoteEditor ({ note, variant }: { note: Note; variant: 'pane' | '
             </button>
           </div>
         ) : null}
+        <button type="button" className="btn btn-ghost btn-small" onClick={openRewrite}>
+          AI 整理
+        </button>
         <div className="note-meta">
           {note.body.length} 字 · {note.refs.length} 个来源
         </div>
       </div>
+
+      {panel || rewrite?.noteId === note.id ? (
+        <div className="rewrite-panel">
+          <div className="rewrite-head">
+            <span>AI 整理</span>
+            <span className="hint">只改写选中的片段，来源锚点不动</span>
+          </div>
+          <div className="rewrite-presets">
+            {['润色，保持原意', '精简，去掉重复', '整理成提纲', '补充一个例子'].map((item) => (
+              <button key={item} type="button" className="chip" onClick={() => setInstruction(item)}>
+                {item}
+              </button>
+            ))}
+          </div>
+          <input
+            className="rewrite-instruction"
+            value={instruction}
+            onChange={(event) => setInstruction(event.target.value)}
+            placeholder="告诉 AI 怎么整理这段"
+          />
+          {rewrite?.noteId === note.id ? (
+            <div className={`rewrite-preview${rewrite.status === 'error' ? ' is-error' : ''}`}>
+              {rewrite.status === 'error' ? (rewrite.error || '整理失败') : (rewrite.text || '生成中…')}
+            </div>
+          ) : null}
+          <div className="form-row">
+            <button
+              type="button"
+              className="btn btn-primary btn-small"
+              disabled={rewrite?.status === 'streaming'}
+              onClick={() => {
+                if (!range) return
+                void startRewrite({ noteId: note.id, start: range.start, end: range.end, text: range.text, instruction })
+              }}
+            >
+              {rewrite?.status === 'streaming' ? '生成中…' : '开始整理'}
+            </button>
+            <button
+              type="button"
+              className="btn btn-small"
+              disabled={rewrite?.status !== 'done' || rewrite.noteId !== note.id}
+              onClick={() => {
+                applyRewrite()
+                setPanel(false)
+              }}
+            >
+              应用到原文
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost btn-small"
+              onClick={() => {
+                cancelRewrite()
+                setPanel(false)
+              }}
+            >
+              取消
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       <div className="note-body">
         {mode === 'edit' ? (

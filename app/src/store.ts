@@ -1,10 +1,14 @@
 import { create } from 'zustand'
 import type {
-  Annotation, ChatMessage, FileKind, FileRec, Note, NoteRef,
-  PersistedState, Provider, Rect, WorkspaceState
+  ActiveModel, AIMessage, Annotation, ChatMessage, CredentialSource, DeviceCode, FileKind, FileRec,
+  Note, NoteRef, PersistedState, ProviderAuthState, ProviderConnection, Rect, RewriteState,
+  SourceDetection, WorkspaceState
 } from './types'
-import { DEFAULT_PROVIDERS } from './types'
-import { extractPageTexts, loadPdf } from './lib/pdf'
+import {
+  CUSTOM_PRESET, CUSTOM_PRESET_ID, DEFAULT_ACTIVE_MODEL, DEFAULT_CONNECTIONS,
+  activeRoute, adoptSaved, connectionFromPreset, mergeDiscovered, presetOf, routeOf, supportsImage
+} from './lib/providers'
+import { extractPageTexts, loadPdf, renderPageImage, type PageImage } from './lib/pdf'
 import { parseAnswer } from './lib/verify'
 import { uid } from './lib/format'
 
@@ -25,10 +29,11 @@ interface Store extends PersistedState {
   streaming: { reqId: string; messageId: string } | null
   composerFocus: number
   settingsOpen: boolean
-  settingsProvider: string | null
+  settingsConnection: string | null
+  rewrite: RewriteState | null
 
   hydrate: () => Promise<void>
-  openSettings: (providerId?: string) => void
+  openSettings: (connectionId?: string) => void
   closeSettings: () => void
   importDialog: () => Promise<void>
   setView: (view: View) => void
@@ -59,10 +64,30 @@ interface Store extends PersistedState {
   insertSelectionToNote: () => void
   insertAnswerToNote: (messageId: string) => void
 
-  setActiveProvider: (id: string) => void
-  updateProvider: (id: string, patch: Partial<Provider>) => void
+  setActiveModel: (connectionId: string, modelId: string) => void
+  updateConnection: (id: string, patch: Partial<ProviderConnection>) => void
+  addConnection: () => string
+  removeConnection: (id: string) => void
+  toggleModel: (connectionId: string, modelId: string, enabled: boolean) => void
+  addModel: (connectionId: string, modelId: string) => void
+  setDefaultModel: (connectionId: string, modelId: string) => void
   saveKey: (id: string, key: string) => Promise<void>
   clearKey: (id: string) => Promise<void>
+  setAuthMethod: (id: string, method: ProviderConnection['authMethod']) => void
+  refreshAuth: () => Promise<void>
+  setOAuthClientSecret: (id: string, secret: string) => Promise<void>
+  beginOAuth: (id: string) => Promise<void>
+  signOut: (id: string) => Promise<void>
+  detectSources: (sources: CredentialSource[]) => Promise<Record<string, SourceDetection>>
+  importSource: (id: string, source: CredentialSource) => Promise<{ ok: boolean; message: string }>
+  copilotBegin: () => Promise<DeviceCode>
+  copilotPoll: (id: string, deviceCode: string) => Promise<{ status: 'pending' | 'ok' | 'error'; message?: string }>
+  refreshModels: (id: string) => Promise<void>
+  setAttachPageImage: (value: boolean) => void
+
+  startRewrite: (input: { noteId: string; start: number; end: number; text: string; instruction: string }) => Promise<void>
+  cancelRewrite: () => void
+  applyRewrite: () => void
 
   sendQuestion: (question: string) => Promise<void>
   stopAnswer: () => void
@@ -104,13 +129,28 @@ function snapshot (state: Store): PersistedState {
     notes: state.notes,
     annotations: state.annotations,
     messages: state.messages,
-    providers: state.providers.map(({ hasKey: _hasKey, ...rest }) => rest),
-    activeProviderId: state.activeProviderId,
+    connections: state.connections.map(({ hasKey: _hasKey, ...rest }) => rest),
+    activeModel: state.activeModel,
     workspace: state.workspace
   }
 }
 
 let saveTimer: ReturnType<typeof setTimeout> | undefined
+
+function withAuth (connection: ProviderConnection, auth?: ProviderAuthState): ProviderConnection {
+  return {
+    ...connection,
+    hasKey: Boolean(auth?.hasKey),
+    hasOAuth: Boolean(auth?.hasOAuth),
+    hasOAuthClient: Boolean(auth?.hasOAuthClient),
+    oauthExpiresAt: auth?.oauthExpiresAt,
+    hasSubscription: Boolean(auth?.hasSubscription),
+    subscriptionAccount: auth?.subscriptionAccount,
+    subscriptionExpiresAt: auth?.subscriptionExpiresAt
+  }
+}
+
+const REWRITE_PROMPT = '你是笔记编辑器。只改写用户给出的片段：保持原意与事实，保留 Markdown 结构，只输出改写后的片段本身，不要解释、不要加标题、不要代码块围栏。'
 
 export const useStore = create<Store>((set, get) => {
   const persist = () => {
@@ -142,8 +182,8 @@ export const useStore = create<Store>((set, get) => {
     notes: [],
     annotations: [],
     messages: [],
-    providers: DEFAULT_PROVIDERS,
-    activeProviderId: 'demo',
+    connections: DEFAULT_CONNECTIONS,
+    activeModel: DEFAULT_ACTIVE_MODEL,
     workspace: {
       tabs: [],
       activeTab: null,
@@ -151,7 +191,8 @@ export const useStore = create<Store>((set, get) => {
       zoom: 1,
       activeNoteId: null,
       contextScope: 'selection',
-      readerPanel: 'doc'
+      readerPanel: 'doc',
+      attachPageImage: false
     },
     hydrated: false,
     view: 'home',
@@ -162,19 +203,20 @@ export const useStore = create<Store>((set, get) => {
     streaming: null,
     composerFocus: 0,
     settingsOpen: false,
-    settingsProvider: null,
+    settingsConnection: null,
+    rewrite: null,
 
-    openSettings: (providerId) => set({ settingsOpen: true, settingsProvider: providerId ?? get().activeProviderId }),
-    closeSettings: () => set({ settingsOpen: false, settingsProvider: null }),
+    openSettings: (connectionId) => set({ settingsOpen: true, settingsConnection: connectionId ?? get().activeModel.connectionId }),
+    closeSettings: () => set({ settingsOpen: false, settingsConnection: null }),
     importDialog: async () => {
       const paths = await window.cs.pickFiles()
       await get().importPaths(paths)
     },
 
     hydrate: async () => {
-      const { state, keys } = await window.cs.getState()
+      const { state, auth } = await window.cs.getState()
       if (state && state.workspace) {
-        const providers = state.providers?.length ? state.providers : DEFAULT_PROVIDERS
+        const { connections, activeModel } = adoptSaved(state)
         const defaults: WorkspaceState = {
           tabs: [],
           activeTab: null,
@@ -182,12 +224,17 @@ export const useStore = create<Store>((set, get) => {
           zoom: 1,
           activeNoteId: null,
           contextScope: 'selection',
-          readerPanel: 'doc'
+          readerPanel: 'doc',
+          attachPageImage: false
         }
         set({
-          ...state,
+          files: state.files ?? [],
+          notes: state.notes ?? [],
+          annotations: state.annotations ?? [],
+          messages: state.messages ?? [],
           workspace: { ...defaults, ...state.workspace },
-          providers: providers.map((p) => ({ ...p, hasKey: Boolean(keys[p.id]) })),
+          connections: connections.map((item) => withAuth(item, auth[item.id])),
+          activeModel,
           hydrated: true
         })
         if (state.files.length) {
@@ -203,10 +250,10 @@ export const useStore = create<Store>((set, get) => {
       } else {
         const note = starterNote()
         set({
-          providers: DEFAULT_PROVIDERS.map((p) => ({ ...p, hasKey: false })),
-          activeProviderId: 'demo',
+          connections: DEFAULT_CONNECTIONS.map((item) => withAuth(item)),
+          activeModel: DEFAULT_ACTIVE_MODEL,
           notes: [note],
-          workspace: { tabs: [], activeTab: null, pages: {}, zoom: 1, activeNoteId: note.id, contextScope: 'selection', readerPanel: 'doc' },
+          workspace: { tabs: [], activeTab: null, pages: {}, zoom: 1, activeNoteId: note.id, contextScope: 'selection', readerPanel: 'doc', attachPageImage: false },
           hydrated: true
         })
       }
@@ -466,24 +513,223 @@ export const useStore = create<Store>((set, get) => {
       get().notify('回答已加入笔记')
     },
 
-    setActiveProvider: (id) => {
-      set({ activeProviderId: id })
+    setActiveModel: (connectionId, modelId) => {
+      set({ activeModel: { connectionId, modelId } })
       persist()
     },
 
-    updateProvider: (id, patch) => {
-      set((s) => ({ providers: s.providers.map((p) => (p.id === id ? { ...p, ...patch } : p)) }))
+    updateConnection: (id, patch) => {
+      set((s) => ({ connections: s.connections.map((c) => (c.id === id ? { ...c, ...patch } : c)) }))
+      persist()
+    },
+
+    addConnection: () => {
+      const id = `custom-${uid().slice(0, 8)}`
+      const connection: ProviderConnection = { ...connectionFromPreset(CUSTOM_PRESET), id, name: '自定义服务' }
+      set((s) => ({ connections: [...s.connections, connection], settingsOpen: true, settingsConnection: id }))
+      persist()
+      return id
+    },
+
+    removeConnection: (id) => {
+      const connection = get().connections.find((c) => c.id === id)
+      if (!connection || connection.presetId !== CUSTOM_PRESET_ID) return
+      void window.cs.clearKey(id)
+      set((s) => ({
+        connections: s.connections.filter((c) => c.id !== id),
+        activeModel: s.activeModel.connectionId === id ? DEFAULT_ACTIVE_MODEL : s.activeModel,
+        settingsConnection: null
+      }))
+      persist()
+      get().notify(`已移除 ${connection.name}`)
+    },
+
+    toggleModel: (connectionId, modelId, enabled) => {
+      set((s) => ({
+        connections: s.connections.map((c) => {
+          if (c.id !== connectionId) return c
+          const ids = enabled
+            ? (c.enabledModelIds.includes(modelId) ? c.enabledModelIds : [...c.enabledModelIds, modelId])
+            : c.enabledModelIds.filter((item) => item !== modelId)
+          return { ...c, enabledModelIds: ids, defaultModelId: ids.includes(c.defaultModelId ?? '') ? c.defaultModelId : ids[0] }
+        })
+      }))
+      const state = get()
+      const connection = state.connections.find((c) => c.id === connectionId)
+      if (connection && state.activeModel.connectionId === connectionId && !enabled) {
+        const next = connection.defaultModelId
+        if (next) set({ activeModel: { connectionId, modelId: next } })
+      }
+      persist()
+    },
+
+    addModel: (connectionId, modelId) => {
+      const trimmed = modelId.trim()
+      if (!trimmed) return
+      set((s) => ({
+        connections: s.connections.map((c) => (c.id === connectionId
+          ? {
+              ...c,
+              enabledModelIds: c.enabledModelIds.includes(trimmed) ? c.enabledModelIds : [...c.enabledModelIds, trimmed],
+              defaultModelId: c.defaultModelId ?? trimmed
+            }
+          : c))
+      }))
+      persist()
+    },
+
+    setDefaultModel: (connectionId, modelId) => {
+      set((s) => ({ connections: s.connections.map((c) => (c.id === connectionId ? { ...c, defaultModelId: modelId } : c)) }))
       persist()
     },
 
     saveKey: async (id, key) => {
       await window.cs.setKey(id, key)
-      set((s) => ({ providers: s.providers.map((p) => (p.id === id ? { ...p, hasKey: true } : p)) }))
+      set((s) => ({ connections: s.connections.map((c) => (c.id === id ? { ...c, hasKey: true } : c)) }))
     },
 
     clearKey: async (id) => {
       await window.cs.clearKey(id)
-      set((s) => ({ providers: s.providers.map((p) => (p.id === id ? { ...p, hasKey: false } : p)) }))
+      set((s) => ({ connections: s.connections.map((c) => (c.id === id ? { ...c, hasKey: false } : c)) }))
+    },
+
+    setAuthMethod: (id, method) => {
+      set((s) => ({ connections: s.connections.map((c) => (c.id === id ? { ...c, authMethod: method } : c)) }))
+      persist()
+    },
+
+    refreshAuth: async () => {
+      const auth = await window.cs.authState()
+      set((s) => ({ connections: s.connections.map((c) => withAuth(c, auth[c.id])) }))
+    },
+
+    setOAuthClientSecret: async (id, secret) => {
+      await window.cs.setOAuthClient(id, secret)
+      await get().refreshAuth()
+    },
+
+    beginOAuth: async (id) => {
+      const connection = get().connections.find((c) => c.id === id)
+      const preset = connection ? presetOf(connection) : undefined
+      if (!connection || !preset?.oauth) {
+        get().notify('该服务没有配置 OAuth', 'error')
+        return
+      }
+      if (!connection.oauthClientId) {
+        get().notify('请先填写 OAuth 客户端 ID', 'error')
+        return
+      }
+      get().notify('已打开浏览器，请完成授权')
+      const result = await window.cs.oauthBegin({ connectionId: id, oauth: preset.oauth, clientId: connection.oauthClientId })
+      await get().refreshAuth()
+      get().notify(result.message, result.ok ? 'info' : 'error')
+    },
+
+    signOut: async (id) => {
+      const connection = get().connections.find((c) => c.id === id)
+      if (!connection) return
+      if (connection.authMethod === 'oauth') await window.cs.oauthSignout(id)
+      else await window.cs.subscriptionSignout(id)
+      await get().refreshAuth()
+      get().notify('已退出授权')
+    },
+
+    detectSources: (sources) => window.cs.subscriptionDetect(sources),
+
+    importSource: async (id, source) => {
+      const result = await window.cs.subscriptionImport(id, source)
+      await get().refreshAuth()
+      get().notify(result.message, result.ok ? 'info' : 'error')
+      return result
+    },
+
+    copilotBegin: () => window.cs.copilotBegin(),
+
+    copilotPoll: async (id, deviceCode) => {
+      const result = await window.cs.copilotPoll(id, deviceCode)
+      if (result.status === 'ok') {
+        await get().refreshAuth()
+        get().notify('Copilot 已授权')
+      }
+      return result
+    },
+
+    refreshModels: async (id) => {
+      const connection = get().connections.find((c) => c.id === id)
+      if (!connection) return
+      if (presetOf(connection)?.modelList === 'registry') {
+        get().notify('该服务不提供模型列表，使用内置目录', 'error')
+        return
+      }
+      const result = await window.cs.listModels({
+        connectionId: connection.id,
+        protocol: connection.protocol,
+        baseUrl: connection.baseUrl,
+        authMethod: connection.authMethod,
+        projectId: connection.oauthProjectId
+      })
+      if (!result.ok) {
+        get().notify(result.message, 'error')
+        return
+      }
+      const models = mergeDiscovered(connection, result.models)
+      const enabled = connection.enabledModelIds.length
+        ? connection.enabledModelIds
+        : models.slice(0, 3).map((model) => model.modelId)
+      set((s) => ({
+        connections: s.connections.map((c) => (c.id === id
+          ? {
+              ...c,
+              models,
+              modelsFetchedAt: Date.now(),
+              enabledModelIds: enabled,
+              defaultModelId: c.defaultModelId ?? enabled[0]
+            }
+          : c))
+      }))
+      persist()
+      get().notify(result.message)
+    },
+
+    setAttachPageImage: (value) => {
+      set((s) => ({ workspace: { ...s.workspace, attachPageImage: value } }))
+      persist()
+    },
+
+    startRewrite: async ({ noteId, start, end, text, instruction }) => {
+      const state = get()
+      if (state.rewrite?.status === 'streaming') return
+      const active = activeRoute(state.connections, state.activeModel)
+      if (!active) {
+        state.notify('先选择一个模型', 'error')
+        return
+      }
+      const reqId = uid()
+      set({ rewrite: { reqId, noteId, start, end, original: text, text: '', status: 'streaming' } })
+      const demoText = active.connection.protocol === 'demo' ? '（演示模式）\n' + text : undefined
+      await window.cs.startAI(reqId, {
+        route: routeOf(active.connection, active.model),
+        system: REWRITE_PROMPT,
+        messages: [{ role: 'user', content: instruction + '\n\n---\n' + text }],
+        demoText
+      })
+    },
+
+    cancelRewrite: () => {
+      const rewrite = get().rewrite
+      if (rewrite?.status === 'streaming') window.cs.cancelAI(rewrite.reqId)
+      set({ rewrite: null })
+    },
+
+    applyRewrite: () => {
+      const rewrite = get().rewrite
+      if (!rewrite || rewrite.status !== 'done') return
+      const note = get().notes.find((n) => n.id === rewrite.noteId)
+      if (!note) return
+      const body = note.body.slice(0, rewrite.start) + rewrite.text + note.body.slice(rewrite.end)
+      get().updateNote(note.id, { body })
+      set({ rewrite: null })
+      get().notify('已应用整理结果')
     },
 
     sendQuestion: async (question) => {
@@ -496,8 +742,13 @@ export const useStore = create<Store>((set, get) => {
       if (state.streaming) return
       const trimmed = question.trim()
       if (!trimmed) return
-      const provider = state.providers.find((p) => p.id === state.activeProviderId) ?? state.providers[0]
-      if (provider.kind !== 'demo' && !provider.hasKey) {
+      const active = activeRoute(state.connections, state.activeModel)
+      if (!active) {
+        state.notify('请先在模型服务里启用一个模型', 'error')
+        return
+      }
+      const { connection, model } = active
+      if (connection.protocol !== 'demo' && !connection.hasKey) {
         state.notify('请先在模型服务中填写该服务的 API Key', 'error')
         return
       }
@@ -506,6 +757,15 @@ export const useStore = create<Store>((set, get) => {
       const selection = state.selection && state.selection.fileId === file.id ? state.selection : null
       const scope = state.workspace.contextScope
       const { contextText, label } = buildContext({ file, page, pages, scope, selection })
+      const wantsImage = supportsImage(model) && state.workspace.attachPageImage && file.kind === 'pdf'
+      let image: PageImage | null = null
+      if (wantsImage) {
+        try {
+          image = await renderPageImage(file.id, page)
+        } catch {
+          image = null
+        }
+      }
       const history = state.messages
         .filter((m) => m.content.trim() && m.status !== 'error')
         .slice(-6)
@@ -516,7 +776,7 @@ export const useStore = create<Store>((set, get) => {
         role: 'user',
         content: trimmed,
         createdAt: Date.now(),
-        contextLabel: label,
+        contextLabel: image ? `${label} · 含本页截图` : label,
         fileId: file.id,
         page
       }
@@ -526,10 +786,11 @@ export const useStore = create<Store>((set, get) => {
         content: '',
         createdAt: Date.now(),
         status: 'streaming',
-        providerName: provider.name,
-        model: provider.model,
+        providerName: connection.name,
+        model: model.modelId,
         fileId: file.id,
-        page
+        page,
+        withImage: Boolean(image)
       }
       const reqId = uid()
       set((s) => ({
@@ -539,11 +800,15 @@ export const useStore = create<Store>((set, get) => {
       }))
       persist()
 
-      const demoText = provider.kind === 'demo' ? demoAnswer({ file, page, pages, selection, question: trimmed }) : undefined
+      const demoText = connection.protocol === 'demo' ? demoAnswer({ file, page, pages, selection, question: trimmed }) : undefined
+      const prompt = `${contextText}\n\n问题：${trimmed}`
+      const content: AIMessage['content'] = image
+        ? [{ type: 'text', text: prompt }, { type: 'image', mediaType: image.mediaType, data: image.data }]
+        : prompt
       await window.cs.startAI(reqId, {
-        provider,
+        route: routeOf(connection, model),
         system: SYSTEM_PROMPT,
-        messages: [...history, { role: 'user', content: `${contextText}\n\n问题：${trimmed}` }],
+        messages: [...history, { role: 'user', content }],
         demoText
       })
     },
@@ -556,6 +821,21 @@ export const useStore = create<Store>((set, get) => {
 
     handleAIEvent: (event) => {
       const state = get()
+      const rewrite = state.rewrite
+      if (rewrite && rewrite.reqId === event.reqId) {
+        if (event.type === 'delta') {
+          set((s) => ({ rewrite: s.rewrite ? { ...s.rewrite, text: s.rewrite.text + (event.delta || '') } : null }))
+          return
+        }
+        if (event.type === 'done') {
+          set((s) => ({ rewrite: s.rewrite ? { ...s.rewrite, text: event.text || s.rewrite.text, status: 'done' } : null }))
+          return
+        }
+        if (event.type === 'error') {
+          set((s) => ({ rewrite: s.rewrite ? { ...s.rewrite, status: 'error', error: event.message || '整理失败' } : null }))
+          return
+        }
+      }
       const streaming = state.streaming
       if (!streaming || streaming.reqId !== event.reqId) return
 

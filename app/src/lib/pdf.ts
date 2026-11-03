@@ -43,4 +43,35 @@ export async function extractPageTexts (doc: PdfDoc): Promise<string[]> {
   return pages
 }
 
+export interface PageImage {
+  mediaType: string
+  data: string
+  width: number
+  height: number
+}
+
+/** Renders one page to a JPEG payload for vision models; null when the PDF is not loaded. */
+export async function renderPageImage (fileId: string, page: number, maxWidth = 1280): Promise<PageImage | null> {
+  const doc = cachedPdf(fileId)
+  if (!doc) return null
+  const pdfPage = await doc.getPage(page)
+  const base = pdfPage.getViewport({ scale: 1 })
+  const viewport = pdfPage.getViewport({ scale: Math.min(2, maxWidth / base.width) })
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.floor(viewport.width)
+  canvas.height = Math.floor(viewport.height)
+  const context = canvas.getContext('2d')
+  if (!context) return null
+  context.fillStyle = '#ffffff'
+  context.fillRect(0, 0, canvas.width, canvas.height)
+  await pdfPage.render({ canvas, canvasContext: context, viewport }).promise
+  const url = canvas.toDataURL('image/jpeg', 0.82)
+  return {
+    mediaType: 'image/jpeg',
+    data: url.slice(url.indexOf(',') + 1),
+    width: canvas.width,
+    height: canvas.height
+  }
+}
+
 export { pdfjs }

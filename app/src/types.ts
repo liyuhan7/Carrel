@@ -1,3 +1,9 @@
+import type { Anchor, ContentLink, Resource } from './shared/contracts/content'
+// >>> integration:course-reading-annotation
+import type { Annotation as ReaderAnnotation, ReadingState } from './shared/contracts/reader'
+import type { LegacyAnnotationRecord } from './reader/migrate'
+// <<< integration:course-reading-annotation
+
 export type FileKind = 'pdf' | 'md' | 'image' | 'other'
 
 export interface FileRec {
@@ -20,6 +26,10 @@ export interface FileRec {
 /** [x, y, width, height] normalised to the page box (0..1). */
 export type Rect = [number, number, number, number]
 
+/**
+ * @deprecated Legacy annotation shape kept only for the migration code and old
+ * imports. New annotations use the contract type in shared/contracts/reader.ts.
+ */
 export interface Annotation {
   id: string
   fileId: string
@@ -281,8 +291,21 @@ export interface WorkspaceState {
 export interface PersistedState {
   files: FileRec[]
   notes: Note[]
-  annotations: Annotation[]
+  // >>> integration:course-reading-annotation
+  /** Anchor-backed annotations (shared/contracts/reader.ts). */
+  annotations: ReaderAnnotation[]
+  /** Raw pre-migration records, retained for recovery and idempotent retries. */
+  legacyAnnotations?: LegacyAnnotationRecord[]
+  /** Per-resource reading position and display options. */
+  readingStates?: Record<string, ReadingState>
+  // <<< integration:course-reading-annotation
   messages: ChatMessage[]
+  /** Unified content identity; see shared/contracts/content.ts. */
+  resources: Record<string, Resource>
+  /** Persisted positions referenced by annotations and links. */
+  anchors: Record<string, Anchor>
+  /** Explicit relations only; never inferred from similarity. */
+  links: Record<string, ContentLink>
   connections: ProviderConnection[]
   activeModel: ActiveModel
   workspace: WorkspaceState

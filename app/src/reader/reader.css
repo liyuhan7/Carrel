@@ -1,0 +1,523 @@
+/* Course reading & annotation module styles.
+   Only classes owned by this module; the shell keeps using styles.css. */
+
+/* ---------- toolbar ---------- */
+
+.reader-toolbar {
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-2);
+}
+
+.reader-toolbar-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  flex-wrap: wrap;
+}
+
+.reader-tool {
+  height: 24px;
+  padding: 0 8px;
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.reader-tool.is-active {
+  background: var(--accent);
+  color: #fbf9f4;
+  border-color: var(--accent);
+}
+
+.reader-tool:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.ann-color {
+  width: 15px;
+  height: 15px;
+  min-width: 15px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(47, 44, 40, 0.18);
+  cursor: pointer;
+}
+
+.ann-color.is-active {
+  box-shadow: 0 0 0 2px var(--surface), 0 0 0 3px var(--accent);
+}
+
+.reader-filter-panel {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  padding: 8px 10px 10px;
+  border-top: 1px dashed var(--line);
+}
+
+.filter-group {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.filter-label {
+  color: var(--faint);
+  font-size: 11px;
+}
+
+.filter-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+
+.filter-check input {
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+/* ---------- overlay ---------- */
+
+.anno-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.anno-item-shape {
+  position: absolute;
+  pointer-events: none;
+}
+
+.anno-highlight {
+  position: absolute;
+  border-radius: 1px;
+  mix-blend-mode: multiply;
+}
+
+.anno-underline,
+.anno-strike {
+  position: absolute;
+  height: 0;
+}
+
+.anno-underline.is-relocated,
+.anno-strike.is-relocated {
+  opacity: 0.85;
+}
+
+.anno-shape {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+}
+
+.anno-note-marker {
+  position: absolute;
+  z-index: 4;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  border: 1.5px solid var(--evidence);
+  background: var(--surface);
+  font-size: 11px;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+  pointer-events: auto;
+  box-shadow: 0 1px 4px rgba(47, 44, 40, 0.2);
+}
+
+.anno-item-shape.is-selected {
+  outline: 1.5px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.anno-item-shape.is-relocated.anno-highlight {
+  mix-blend-mode: normal;
+}
+
+.anno-drag-preview {
+  position: absolute;
+  border: 1.5px dashed var(--accent);
+  background: rgba(95, 111, 121, 0.08);
+  pointer-events: none;
+}
+
+.pdf-page.is-region-tool .textLayer {
+  user-select: none;
+  cursor: crosshair;
+}
+
+/* ---------- sidebar ---------- */
+
+.ann-sidebar {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.ann-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-2);
+}
+
+.ann-tabs button {
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.ann-tabs button.is-active {
+  background: var(--surface);
+  border-color: var(--line);
+  color: var(--ink);
+}
+
+.ann-tab-count {
+  margin-left: 4px;
+  color: var(--faint);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.ann-list {
+  flex: 1;
+  overflow: auto;
+  padding: 10px 12px;
+}
+
+.ann-empty {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.65;
+  padding: 6px 2px;
+}
+
+.ann-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 9px 2px;
+  border-bottom: 1px solid var(--line);
+}
+
+.ann-main,
+.ann-link {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  text-align: left;
+  color: inherit;
+}
+
+.ann-main:hover .ann-summary,
+.ann-link:hover .ann-summary {
+  color: var(--accent);
+}
+
+.ann-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--faint);
+}
+
+.ann-swatch {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  border: 1px solid rgba(47, 44, 40, 0.15);
+}
+
+.ann-kind {
+  color: var(--ink-2);
+  font-size: 11.5px;
+}
+
+.ann-page {
+  font-variant-numeric: tabular-nums;
+}
+
+.ann-status {
+  margin-left: auto;
+  padding: 0 5px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  line-height: 16px;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+.ann-status.is-ok {
+  color: var(--ok);
+  background: rgba(109, 130, 114, 0.12);
+}
+
+.ann-status.is-warn {
+  color: #8a6a33;
+  background: rgba(217, 196, 143, 0.28);
+}
+
+.ann-status.is-bad {
+  color: var(--danger);
+  background: rgba(164, 104, 92, 0.12);
+}
+
+.ann-summary {
+  font-size: 12.5px;
+  line-height: 1.55;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.ann-hint {
+  color: var(--faint);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.ann-actions {
+  display: flex;
+  gap: 12px;
+  padding-top: 2px;
+}
+
+.ann-actions .link {
+  font-size: 11.5px;
+}
+
+.link.is-danger,
+.ann-actions .link.is-danger {
+  color: var(--danger);
+}
+
+.ann-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 2px;
+}
+
+.ann-editor textarea,
+.anno-popover textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 54px;
+  padding: 6px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+.ann-editor-row,
+.anno-popover-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.ann-link-dir {
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.ann-link-dir.is-in {
+  color: var(--evidence);
+}
+
+/* ---------- annotation popover ---------- */
+
+.anno-popover {
+  position: fixed;
+  z-index: 60;
+  width: 322px;
+  max-height: 60vh;
+  overflow: auto;
+  padding: 10px 12px 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+  box-shadow: var(--shadow-pop);
+}
+
+.anno-popover-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.anno-popover-kind {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.anno-popover-page {
+  font-variant-numeric: tabular-nums;
+}
+
+.anno-popover-quote {
+  margin-top: 8px;
+  padding: 7px 9px;
+  border-left: 2px solid var(--evidence);
+  background: var(--surface-2);
+  color: var(--ink-2);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.anno-popover-status {
+  margin-top: 8px;
+  color: #8a6a33;
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+
+.anno-popover-body {
+  margin-top: 8px;
+  font-size: 12.5px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+}
+
+.anno-popover-actions {
+  display: flex;
+  gap: 14px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.anno-popover-actions .link {
+  font-size: 11.5px;
+}
+
+.anno-popover-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-top: 8px;
+}
+
+.anno-popover-candidates {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 11.5px;
+}
+
+.anno-popover-candidates .link.is-active {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* ---------- selection note composer ---------- */
+
+.selection-pop.selection-note {
+  width: 348px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  padding: 10px;
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--line);
+}
+
+.selection-quote {
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.5;
+  max-height: 54px;
+  overflow: hidden;
+}
+
+.selection-note textarea {
+  width: 100%;
+  min-height: 64px;
+  resize: vertical;
+  padding: 7px 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+.selection-note-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.selection-pop.selection-note button {
+  color: var(--ink-2);
+  background: var(--surface-2);
+  height: 26px;
+}
+
+.selection-pop.selection-note button:hover {
+  background: var(--surface-3);
+}
+
+.selection-pop.selection-note button.is-primary {
+  background: var(--accent);
+  color: #fbf9f4;
+}
+
+.selection-pop.selection-note button.is-primary:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* ---------- reading state ---------- */
+
+.reader-state-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--faint);
+  font-size: 11px;
+}
+
+.reader-state-hint .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ok);
+}

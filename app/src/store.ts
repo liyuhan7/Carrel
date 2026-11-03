@@ -1,16 +1,37 @@
 import { create } from 'zustand'
 import type {
-  ActiveModel, AIMessage, Annotation, ChatMessage, CredentialSource, DeviceCode, FileKind, FileRec,
+  ActiveModel, AIMessage, ChatMessage, CredentialSource, DeviceCode, FileKind, FileRec,
   Note, NoteRef, PersistedState, ProviderAuthState, ProviderConnection, Rect, RewriteState,
   SourceDetection, WorkspaceState
 } from './types'
+// >>> integration:course-reading-annotation
+import type {
+  Annotation as ReaderAnnotation,
+  AnnotationStyle,
+  ReadingState,
+  SelectionDraft
+} from './shared/contracts/reader'
+import { createAnnotationService, type AnnotationPort, type ReaderAnnotationService } from './reader/annotationService'
+import { createAsksAboutLink } from './reader/links'
+import { migrateStoredAnnotations } from './reader/migrate'
+import type { LegacyAnnotationRecord, LegacyFileMeta } from './reader/migrate'
+import { clampReadingState, createReadingState, patchReadingState } from './reader/readingState'
+import type { ReadingStatePatch } from './reader/readingState'
+// <<< integration:course-reading-annotation
 import {
   CUSTOM_PRESET, CUSTOM_PRESET_ID, DEFAULT_ACTIVE_MODEL, DEFAULT_CONNECTIONS,
   activeRoute, adoptSaved, connectionFromPreset, mergeDiscovered, presetOf, routeOf, supportsImage
 } from './lib/providers'
-import { extractPageTexts, loadPdf, renderPageImage, type PageImage } from './lib/pdf'
+import { extractPageTexts, dropPdf, loadPdf, renderPageImage, type PageImage } from './lib/pdf'
 import { parseAnswer } from './lib/verify'
 import { uid } from './lib/format'
+import type {
+  AnchorService, LinkService, NavigationService, ResourceRegistry, StateTransactionService
+} from './shared/contracts/content'
+import {
+  createAnchorService, createLinkService, createNavigationService, createResourceRegistry,
+  createTransactionService, type SharedDataPort
+} from './shared/services'
 
 export type View = 'home' | 'workspace' | 'library' | 'notes'
 
@@ -23,7 +44,15 @@ interface Store extends PersistedState {
   hydrated: boolean
   view: View
   saveStatus: 'saved' | 'saving' | 'error'
-  selection: { fileId: string; page: number; text: string } | null
+  selection: {
+    fileId: string
+    page: number
+    text: string
+    // >>> integration:course-reading-annotation
+    /** In-memory selector for the pending selection; cleared on send/cancel. */
+    draft?: SelectionDraft
+    // <<< integration:course-reading-annotation
+  } | null
   focusQuote: { fileId: string; page: number; quote: string; nonce: number } | null
   toasts: Toast[]
   streaming: { reqId: string; messageId: string } | null
@@ -31,6 +60,15 @@ interface Store extends PersistedState {
   settingsOpen: boolean
   settingsConnection: string | null
   rewrite: RewriteState | null
+  /** Shared content services; see shared/services/. */
+  resourceRegistry: ResourceRegistry
+  anchorService: AnchorService
+  linkService: LinkService
+  navigation: NavigationService
+  transactions: StateTransactionService
+  // >>> integration:course-reading-annotation
+  annotationService: ReaderAnnotationService
+  // <<< integration:course-reading-annotation
 
   hydrate: () => Promise<void>
   openSettings: (connectionId?: string) => void
@@ -51,10 +89,26 @@ interface Store extends PersistedState {
   removeFile: (id: string) => void
   revealFile: (id: string) => void
 
-  setSelection: (selection: { fileId: string; page: number; text: string } | null) => void
+  setSelection: (selection: Store['selection']) => void
   focusOn: (fileId: string, page: number, quote: string) => void
   addAnnotation: (fileId: string, page: number, rects: Rect[], text: string) => void
-  removeAnnotation: (id: string) => void
+  removeAnnotation: (id: string) => Promise<void>
+  // >>> integration:course-reading-annotation
+  createAnnotation: (
+    selection: SelectionDraft,
+    kind: ReaderAnnotation['kind'],
+    style: AnnotationStyle,
+    body?: string
+  ) => Promise<ReaderAnnotation | null>
+  updateAnnotation: (
+    annotationId: string,
+    changes: { style?: AnnotationStyle; body?: string }
+  ) => Promise<void>
+  undoAnnotation: (resourceId: string) => Promise<boolean>
+  /** Ensure (kind:'document', sourceId:fileId) exists; returns its Resource.id. */
+  ensureFileResource: (fileId: string) => Promise<string | null>
+  setReadingState: (resourceId: string, patch: ReadingStatePatch) => void
+  // <<< integration:course-reading-annotation
 
   createNote: (title?: string) => string
   selectNote: (id: string) => void
@@ -128,7 +182,14 @@ function snapshot (state: Store): PersistedState {
     files: state.files,
     notes: state.notes,
     annotations: state.annotations,
+    // >>> integration:course-reading-annotation
+    legacyAnnotations: state.legacyAnnotations,
+    readingStates: state.readingStates,
+    // <<< integration:course-reading-annotation
     messages: state.messages,
+    resources: state.resources,
+    anchors: state.anchors,
+    links: state.links,
     connections: state.connections.map(({ hasKey: _hasKey, ...rest }) => rest),
     activeModel: state.activeModel,
     workspace: state.workspace
@@ -136,6 +197,15 @@ function snapshot (state: Store): PersistedState {
 }
 
 let saveTimer: ReturnType<typeof setTimeout> | undefined
+
+// >>> integration:course-reading-annotation
+/** Document Resource.id for an existing file; never a raw fileId. */
+function documentResourceId (state: { resources: Store['resources'] }, fileId: string): string | undefined {
+  return Object.values(state.resources).find(
+    (resource) => resource.kind === 'document' && resource.sourceId === fileId
+  )?.id
+}
+// <<< integration:course-reading-annotation
 
 function withAuth (connection: ProviderConnection, auth?: ProviderAuthState): ProviderConnection {
   return {
@@ -177,11 +247,63 @@ export const useStore = create<Store>((set, get) => {
   }
   ;(globalThis as unknown as { __csFlush: () => Promise<void> }).__csFlush = flush
 
+  const sharedPort: SharedDataPort = {
+    read: () => ({ resources: get().resources, anchors: get().anchors, links: get().links }),
+    write: (next) => {
+      set({ resources: next.resources, anchors: next.anchors, links: next.links })
+      persist()
+    },
+    // Annotations are migrated to anchorId by the reading module; tolerate both shapes.
+    isAnchorUsed: (anchorId) =>
+      get().annotations.some((item) => (item as { anchorId?: string }).anchorId === anchorId),
+    now: () => Date.now(),
+    nextId: () => uid()
+  }
+  const resourceRegistry = createResourceRegistry(sharedPort)
+  const anchorService = createAnchorService(sharedPort)
+  const linkService = createLinkService(sharedPort)
+  const transactions = createTransactionService(sharedPort)
+  const navigation = createNavigationService(sharedPort, {
+    async openDocument (sourceId, location) {
+      if (!get().files.some((item) => item.id === sourceId)) throw new Error('来源文件不可访问')
+      if (!get().workspace.tabs.includes(sourceId)) await get().openFile(sourceId)
+      if (location?.page) get().setPage(sourceId, location.page)
+      if (location?.quote) get().focusOn(sourceId, location.page ?? 1, location.quote)
+    },
+    openNote (sourceId) {
+      get().selectNote(sourceId)
+      set({ view: 'notes' })
+    },
+    openConversation () {
+      set({ view: 'workspace' })
+    }
+  })
+
+  // >>> integration:course-reading-annotation
+  const annotationPort: AnnotationPort = {
+    read: () => get().annotations,
+    write: (next) => {
+      set({ annotations: next })
+      persist()
+    },
+    now: () => Date.now(),
+    nextId: () => uid()
+  }
+  const annotationService = createAnnotationService({ port: annotationPort, anchorService, transactions })
+  // <<< integration:course-reading-annotation
+
   return {
     files: [],
     notes: [],
     annotations: [],
+    // >>> integration:course-reading-annotation
+    legacyAnnotations: [],
+    readingStates: {},
+    // <<< integration:course-reading-annotation
     messages: [],
+    resources: {},
+    anchors: {},
+    links: {},
     connections: DEFAULT_CONNECTIONS,
     activeModel: DEFAULT_ACTIVE_MODEL,
     workspace: {
@@ -194,6 +316,14 @@ export const useStore = create<Store>((set, get) => {
       readerPanel: 'doc',
       attachPageImage: false
     },
+    resourceRegistry,
+    anchorService,
+    linkService,
+    navigation,
+    transactions,
+    // >>> integration:course-reading-annotation
+    annotationService,
+    // <<< integration:course-reading-annotation
     hydrated: false,
     view: 'home',
     saveStatus: 'saved',
@@ -230,8 +360,16 @@ export const useStore = create<Store>((set, get) => {
         set({
           files: state.files ?? [],
           notes: state.notes ?? [],
-          annotations: state.annotations ?? [],
+          // >>> integration:course-reading-annotation
+          // Raw records are staged here and migrated below; nothing is dropped.
+          annotations: [],
+          legacyAnnotations: (state as unknown as { legacyAnnotations?: LegacyAnnotationRecord[] }).legacyAnnotations ?? [],
+          readingStates: (state as unknown as { readingStates?: Record<string, ReadingState> }).readingStates ?? {},
+          // <<< integration:course-reading-annotation
           messages: state.messages ?? [],
+          resources: state.resources ?? {},
+          anchors: state.anchors ?? {},
+          links: state.links ?? {},
           workspace: { ...defaults, ...state.workspace },
           connections: connections.map((item) => withAuth(item, auth[item.id])),
           activeModel,
@@ -247,6 +385,37 @@ export const useStore = create<Store>((set, get) => {
           const pages = await window.cs.getText(id)
           if (pages) textCache.set(id, pages)
         }
+        // >>> integration:course-reading-annotation
+        try {
+          const raw = state as unknown as { annotations?: unknown[]; legacyAnnotations?: unknown[] }
+          const migration = await migrateStoredAnnotations({
+            annotations: raw.annotations ?? [],
+            legacyAnnotations: raw.legacyAnnotations ?? [],
+            files: (state.files ?? []).map((file) => ({
+              id: file.id,
+              name: file.name,
+              hash: file.hash,
+              mtime: file.mtime
+            })),
+            ensureResource: async (file: LegacyFileMeta) => {
+              const resource = await resourceRegistry.ensureResource({
+                kind: 'document',
+                sourceId: file.id
+              })
+              return resource.id
+            },
+            anchorService,
+            transactions
+          })
+          set({ annotations: migration.annotations, legacyAnnotations: migration.legacyAnnotations })
+          if (migration.migrated > 0) get().notify(`已迁移 ${migration.migrated} 条旧标注`)
+          if (migration.failures.length > 0) {
+            get().notify(`${migration.failures.length} 条旧标注迁移失败，原始数据已保留`, 'error')
+          }
+        } catch {
+          get().notify('旧标注迁移失败，原始数据已保留', 'error')
+        }
+        // <<< integration:course-reading-annotation
       } else {
         const note = starterNote()
         set({
@@ -327,10 +496,39 @@ export const useStore = create<Store>((set, get) => {
         get().notify('原始文件已不在原位置，无法打开', 'error')
         return
       }
+      // >>> integration:course-reading-annotation
+      // A file replaced outside Carrel keeps its Resource but must be re-parsed,
+      // otherwise old text would silently anchor the new content.
+      if (file.changed && !textCache.has(id)) {
+        try {
+          if (file.kind === 'pdf') {
+            const bytes = await window.cs.readBytes(file.path)
+            const doc = await loadPdf(id, bytes)
+            const pages = await extractPageTexts(doc)
+            textCache.set(id, pages)
+            await window.cs.saveText(id, pages)
+            if (doc.numPages !== file.pageCount) {
+              set((s) => ({
+                files: s.files.map((f) => (f.id === id ? { ...f, pageCount: doc.numPages } : f))
+              }))
+            }
+          } else if (file.kind === 'md') {
+            const text = await window.cs.readText(file.path)
+            textCache.set(id, [text])
+            await window.cs.saveText(id, [text])
+          }
+        } catch {
+          get().notify('文件已变化，但无法重新解析内容', 'error')
+        }
+      }
+      // <<< integration:course-reading-annotation
       if (!textCache.has(id)) {
         const pages = await window.cs.getText(id)
         if (pages) textCache.set(id, pages)
       }
+      // >>> integration:course-reading-annotation
+      await get().ensureFileResource(id)
+      // <<< integration:course-reading-annotation
       set((s) => {
         const tabs = s.workspace.tabs.includes(id) ? s.workspace.tabs : [...s.workspace.tabs, id]
         return {
@@ -353,7 +551,13 @@ export const useStore = create<Store>((set, get) => {
       try {
         const info = await window.cs.probe(file.path)
         if (info.hash !== file.hash) {
-          set((s) => ({ files: s.files.map((f) => (f.id === id ? { ...f, changed: true } : f)) }))
+          // >>> integration:course-reading-annotation
+          // Adopt the new hash as the effective revision so old anchors relocate
+          // instead of silently drawing at stale coordinates.
+          dropPdf(id)
+          textCache.delete(id)
+          set((s) => ({ files: s.files.map((f) => (f.id === id ? { ...f, changed: true, hash: info.hash } : f)) }))
+          // <<< integration:course-reading-annotation
           get().notify('文件已在外部修改，已有标注可能错位', 'error')
         }
       } catch {
@@ -377,12 +581,48 @@ export const useStore = create<Store>((set, get) => {
       const file = get().files.find((f) => f.id === fileId)
       const total = file?.pageCount || 1
       const next = Math.min(Math.max(1, Math.round(page)), total)
-      set((s) => ({ workspace: { ...s.workspace, pages: { ...s.workspace.pages, [fileId]: next } } }))
+      set((s) => {
+        // >>> integration:course-reading-annotation
+        const resourceId = documentResourceId(s, fileId)
+        const states = s.readingStates ?? {}
+        const readingStates = resourceId
+          ? {
+              ...states,
+              [resourceId]: patchReadingState(
+                states[resourceId] ?? createReadingState({ resourceId }),
+                { location: { kind: 'page', page: next } }
+              )
+            }
+          : states
+        // <<< integration:course-reading-annotation
+        return {
+          workspace: { ...s.workspace, pages: { ...s.workspace.pages, [fileId]: next } },
+          ...(resourceId ? { readingStates } : {})
+        }
+      })
       persist()
     },
 
     setZoom: (zoom) => {
-      set((s) => ({ workspace: { ...s.workspace, zoom: Math.min(3, Math.max(0.6, zoom)) } }))
+      set((s) => {
+        // >>> integration:course-reading-annotation
+        const resourceId = s.workspace.activeTab ? documentResourceId(s, s.workspace.activeTab) : undefined
+        const states = s.readingStates ?? {}
+        const readingStates = resourceId
+          ? {
+              ...states,
+              [resourceId]: patchReadingState(
+                states[resourceId] ?? createReadingState({ resourceId }),
+                { zoom }
+              )
+            }
+          : states
+        // <<< integration:course-reading-annotation
+        return {
+          workspace: { ...s.workspace, zoom: Math.min(3, Math.max(0.6, zoom)) },
+          ...(resourceId ? { readingStates } : {})
+        }
+      })
       persist()
     },
 
@@ -400,7 +640,12 @@ export const useStore = create<Store>((set, get) => {
     removeFile: (id) => {
       set((s) => ({
         files: s.files.filter((f) => f.id !== id),
-        annotations: s.annotations.filter((a) => a.fileId !== id),
+        // >>> integration:course-reading-annotation
+        annotations: s.annotations.filter((a) => {
+          const resource = s.resources[a.resourceId]
+          return !(resource && resource.kind === 'document' && resource.sourceId === id)
+        }),
+        // <<< integration:course-reading-annotation
         workspace: {
           ...s.workspace,
           tabs: s.workspace.tabs.filter((t) => t !== id),
@@ -422,15 +667,96 @@ export const useStore = create<Store>((set, get) => {
     },
 
     addAnnotation: (fileId, page, rects, text) => {
-      const annotation: Annotation = { id: uid(), fileId, page, rects, text, createdAt: Date.now() }
-      set((s) => ({ annotations: [annotation, ...s.annotations] }))
-      persist()
+      // >>> integration:course-reading-annotation
+      // Deprecated compatibility wrapper; new code goes through createAnnotation.
+      void (async () => {
+        const file = get().files.find((f) => f.id === fileId)
+        if (!file) return
+        const resourceId = await get().ensureFileResource(fileId)
+        if (!resourceId) return
+        const selection: SelectionDraft = {
+          kind: 'text',
+          resourceId,
+          revision: file.hash,
+          selector: {
+            type: 'document-text',
+            page,
+            quote: { exact: text },
+            rects,
+            rotation: 0
+          },
+          text
+        }
+        await get().createAnnotation(selection, 'highlight', { color: '#d9c48f', opacity: 0.45, strokeWidth: 2 })
+      })()
+      // <<< integration:course-reading-annotation
     },
 
-    removeAnnotation: (id) => {
-      set((s) => ({ annotations: s.annotations.filter((a) => a.id !== id) }))
+    removeAnnotation: async (id) => {
+      // >>> integration:course-reading-annotation
+      try {
+        await annotationService.remove(id)
+        get().notify('已删除标注，可按 Ctrl/Cmd+Z 撤销')
+      } catch (error) {
+        get().notify((error as Error).message || '无法删除标注', 'error')
+      }
+      // <<< integration:course-reading-annotation
+    },
+
+    // >>> integration:course-reading-annotation
+    createAnnotation: async (selection, kind, style, body) => {
+      try {
+        return await annotationService.create({ selection, kind, style, body })
+      } catch (error) {
+        get().notify((error as Error).message || '无法保存标注', 'error')
+        return null
+      }
+    },
+
+    updateAnnotation: async (annotationId, changes) => {
+      try {
+        await annotationService.update(annotationId, changes)
+      } catch (error) {
+        get().notify((error as Error).message || '无法修改标注', 'error')
+        throw error
+      }
+    },
+
+    undoAnnotation: async (resourceId) => {
+      try {
+        return await annotationService.undo(resourceId)
+      } catch (error) {
+        get().notify((error as Error).message || '撤销失败', 'error')
+        return false
+      }
+    },
+
+    ensureFileResource: async (fileId) => {
+      const file = get().files.find((f) => f.id === fileId)
+      if (!file) return null
+      try {
+        const resource = await resourceRegistry.ensureResource({ kind: 'document', sourceId: file.id })
+        return resource.id
+      } catch {
+        return null
+      }
+    },
+
+    setReadingState: (resourceId, patch) => {
+      set((s) => {
+        const now = Date.now()
+        const states = s.readingStates ?? {}
+        const previous = states[resourceId] ?? createReadingState({ resourceId, now })
+        return {
+          readingStates: {
+            ...states,
+            [resourceId]: patchReadingState(previous, patch, now)
+          }
+        }
+      })
       persist()
     },
+    // <<< integration:course-reading-annotation
 
     createNote: (title = '未命名笔记') => {
       const now = Date.now()
@@ -755,6 +1081,9 @@ export const useStore = create<Store>((set, get) => {
       const page = state.workspace.pages[file.id] ?? 1
       const pages = textCache.get(file.id) ?? []
       const selection = state.selection && state.selection.fileId === file.id ? state.selection : null
+      // >>> integration:course-reading-annotation
+      const selectionDraft = selection?.draft ?? null
+      // <<< integration:course-reading-annotation
       const scope = state.workspace.contextScope
       const { contextText, label } = buildContext({ file, page, pages, scope, selection })
       const wantsImage = supportsImage(model) && state.workspace.attachPageImage && file.kind === 'pdf'
@@ -805,12 +1134,32 @@ export const useStore = create<Store>((set, get) => {
       const content: AIMessage['content'] = image
         ? [{ type: 'text', text: prompt }, { type: 'image', mediaType: image.mediaType, data: image.data }]
         : prompt
-      await window.cs.startAI(reqId, {
+      const started = await window.cs.startAI(reqId, {
         route: routeOf(connection, model),
         system: SYSTEM_PROMPT,
         messages: [...history, { role: 'user', content }],
         demoText
       })
+      // >>> integration:course-reading-annotation
+      // Only a message that actually started creates the asks_about relation.
+      if (started && selectionDraft) {
+        try {
+          await createAsksAboutLink(
+            { selection: selectionDraft, messageId: userMessage.id },
+            {
+              transactions,
+              anchorService,
+              linkService,
+              resourceRegistry,
+              now: () => Date.now(),
+              nextId: () => uid()
+            }
+          )
+        } catch {
+          get().notify('问题已发送，但来源关系建立失败', 'error')
+        }
+      }
+      // <<< integration:course-reading-annotation
     },
 
     stopAnswer: () => {

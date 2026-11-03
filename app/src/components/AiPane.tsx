@@ -4,6 +4,13 @@ import type { ChatMessage, ContextScope } from '../types'
 import { activeRoute, authReady, modelOptions, supportsImage } from '../lib/providers'
 import { renderAnswer } from '../lib/markdown'
 import { Popover } from './Popover'
+// >>> integration:note-capture-editing
+import { uid } from '../lib/format'
+import { capturePlacement, captureTargetNoteId, stripCiteMarkers } from '../notes/capture'
+import { CaptureDraftPanel } from '../notes/CaptureDraftPanel'
+import { useNoteUi } from '../notes/ui'
+import type { NoteSourceCandidate } from '../notes/contracts'
+// <<< integration:note-capture-editing
 
 const SCOPE_LABEL: Record<ContextScope, string> = {
   selection: '选中内容 + 当前页',
@@ -220,6 +227,9 @@ export function AiPane ({ collapsed, onExpand, onCollapse }: {
           </div>
         </div>
       </div>
+      {/* >>> integration:note-capture-editing */}
+      <CaptureDraftPanel />
+      {/* <<< integration:note-capture-editing */}
     </section>
   )
 }
@@ -230,7 +240,9 @@ function Message ({ message }: { message: ChatMessage }) {
   const setPage = useStore((s) => s.setPage)
   const focusOn = useStore((s) => s.focusOn)
   const setReaderPanel = useStore((s) => s.setReaderPanel)
-  const insertAnswerToNote = useStore((s) => s.insertAnswerToNote)
+  // >>> integration:note-capture-editing
+  const [selectedText, setSelectedText] = useState('')
+  // <<< integration:note-capture-editing
   const notify = useStore((s) => s.notify)
   // >>> integration:unified-content-index
   const messageFocus = useStore((s) => s.messageFocus)
@@ -267,6 +279,54 @@ function Message ({ message }: { message: ChatMessage }) {
     if (chip) void openCitation(Number(chip.getAttribute('data-page')))
   }
 
+  // >>> integration:note-capture-editing
+  // Selecting part of an answer only prepares a draft; nothing is written yet.
+  const onBodyMouseUp = () => {
+    const text = window.getSelection()?.toString().trim() ?? ''
+    setSelectedText(text)
+  }
+
+  const startDraft = async (raw: string) => {
+    const text = stripCiteMarkers(raw)
+    if (!text) {
+      notify('先选择回答中的一段内容', 'error')
+      return
+    }
+    const state = useStore.getState()
+    const targetId = captureTargetNoteId(state.notes, state.workspace.activeNoteId, useNoteUi.getState().lastTargetNoteId)
+    if (!targetId) {
+      notify('先新建一份笔记', 'error')
+      return
+    }
+    const conversation = await state.ensureResource({ kind: 'conversation', sourceId: 'chat', title: 'AI 学习助手' })
+    const candidates: NoteSourceCandidate[] = [{
+      resourceId: conversation.id,
+      selector: { type: 'message', messageId: message.id, quote: { exact: text } },
+      relation: 'derived_from',
+      selected: true
+    }]
+    const file = state.files.find((item) => item.id === message.fileId)
+    for (const citation of citations.filter((item) => item.verified)) {
+      if (!file) break
+      const resource = await state.ensureResource({ kind: 'document', sourceId: file.id, title: file.name })
+      candidates.push({
+        resourceId: resource.id,
+        selector: { type: 'document-text', page: citation.page, quote: { exact: citation.quote } },
+        relation: 'derived_from',
+        selected: true
+      })
+    }
+    useNoteUi.getState().openDraft({
+      id: uid(),
+      targetNoteId: targetId,
+      content: text,
+      placement: capturePlacement(state.notePositions[targetId], state.noteBlocks[targetId] ?? []),
+      sourceCandidates: candidates,
+      createdAt: Date.now()
+    })
+  }
+  // <<< integration:note-capture-editing
+
   return (
     // >>> integration:unified-content-index
     <div ref={rootRef} className={`msg msg-${message.role}${focused ? ' is-focused' : ''}`}>
@@ -275,7 +335,14 @@ function Message ({ message }: { message: ChatMessage }) {
         {message.contextLabel ? <span className="msg-context">{message.contextLabel}</span> : null}
       </div>
       {message.content ? (
-        <div className="msg-body" onClick={onClick} dangerouslySetInnerHTML={{ __html: renderAnswer(message.content, citations) }} />
+        <div
+          className="msg-body"
+          onClick={onClick}
+          // >>> integration:note-capture-editing
+          onMouseUp={onBodyMouseUp}
+          // <<< integration:note-capture-editing
+          dangerouslySetInnerHTML={{ __html: renderAnswer(message.content, citations) }}
+        />
       ) : message.status === 'streaming' ? (
         <div className="msg-body msg-thinking">正在阅读资料…</div>
       ) : null}
@@ -283,9 +350,16 @@ function Message ({ message }: { message: ChatMessage }) {
       {message.status === 'stopped' ? <p className="msg-note">已停止生成</p> : null}
       {!isUser && message.status === 'done' ? (
         <div className="msg-foot">
-          <button type="button" className="link" onClick={() => insertAnswerToNote(message.id)}>
-            加入笔记
+          {/* >>> integration:note-capture-editing */}
+          <button type="button" className="link" onClick={() => void startDraft(selectedText || message.content)}>
+            {selectedText ? '整理选中片段到笔记' : '整理到笔记'}
           </button>
+          {selectedText ? (
+            <button type="button" className="link" onClick={() => setSelectedText('')}>
+              取消选择
+            </button>
+          ) : null}
+          {/* <<< integration:note-capture-editing */}
           <button
             type="button"
             className="link"

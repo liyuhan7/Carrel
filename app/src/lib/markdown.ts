@@ -11,9 +11,20 @@ const defaultLinkOpen = md.renderer.rules.link_open ??
 md.renderer.rules.link_open = (tokens, idx, options, env, self) => {
   const href = tokens[idx].attrGet('href') || ''
   if (href.startsWith('csref:')) {
+    const linkId = href.slice(6)
     tokens[idx].attrSet('href', '#')
-    tokens[idx].attrSet('data-ref', href.slice(6))
+    tokens[idx].attrSet('data-ref', linkId)
     tokens[idx].attrSet('class', 'ref-link')
+    // >>> integration:note-capture-editing
+    // The note module resolves link status; markdown stays a pure renderer.
+    const status = (env as { csref?: (id: string) => { status: string; title: string } } | undefined)
+      ?.csref?.(linkId)
+    if (status) {
+      tokens[idx].attrSet('data-status', status.status)
+      tokens[idx].attrSet('title', status.title)
+      tokens[idx].attrJoin('class', `is-${status.status}`)
+    }
+    // <<< integration:note-capture-editing
   }
   return defaultLinkOpen(tokens, idx, options, env, self)
 }
@@ -37,6 +48,6 @@ export function renderAnswer (text: string, citations: Citation[] = []): string 
   })
 }
 
-export function renderNote (body: string): string {
-  return md.render(body)
+export function renderNote (body: string, env?: Record<string, unknown>): string {
+  return md.render(body, env)
 }

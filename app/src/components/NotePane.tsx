@@ -1,5 +1,9 @@
 import { useStore } from '../store'
 import { NoteEditor } from './NoteEditor'
+// >>> integration:note-capture-editing
+import { NoteModuleHost, NoteTabs } from '../notes/NoteModuleHost'
+import { SourceInsertButton } from '../notes/SourceInsertButton'
+// <<< integration:note-capture-editing
 
 export function NotePane ({ collapsed, onExpand, onCollapse }: {
   collapsed: boolean
@@ -15,14 +19,23 @@ export function NotePane ({ collapsed, onExpand, onCollapse }: {
 
   if (collapsed) {
     return (
-      <button type="button" className="pane-rail" onClick={onExpand} title="展开笔记">
-        <span>个人笔记</span>
-      </button>
+      <>
+        {/* >>> integration:note-capture-editing */}
+        <NoteModuleHost />
+        {/* <<< integration:note-capture-editing */}
+        <button type="button" className="pane-rail" onClick={onExpand} title="展开笔记">
+          <span>个人笔记</span>
+        </button>
+      </>
     )
   }
 
   return (
     <section className="pane note-pane">
+      {/* >>> integration:note-capture-editing */}
+      <NoteModuleHost />
+      <NoteTabs />
+      {/* <<< integration:note-capture-editing */}
       <div className="pane-head">
         <span className="pane-title">笔记</span>
         <select className="note-select" value={note?.id ?? ''} aria-label="切换笔记" onChange={(event) => selectNote(event.target.value)}>
@@ -35,6 +48,9 @@ export function NotePane ({ collapsed, onExpand, onCollapse }: {
         <button type="button" className="icon-btn" title="新建笔记" onClick={() => createNote()}>
           ＋
         </button>
+        {/* >>> integration:note-capture-editing */}
+        <SourceInsertButton />
+        {/* <<< integration:note-capture-editing */}
         <span className="tool-spacer" />
         <button type="button" className="icon-btn" title="收起笔记区" onClick={onCollapse}>
           ›

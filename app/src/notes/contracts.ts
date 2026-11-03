@@ -85,3 +85,24 @@ export interface NoteSession {
   dirty: boolean
   writingPosition: WritingPosition
 }
+
+// ─── note module additions (see handoff: 契约增补) ─────────────────────────
+
+/** Structural kind of a parsed Markdown block. `blank` is an empty paragraph run. */
+export type NoteBlockKind =
+  | 'heading'
+  | 'paragraph'
+  | 'list'
+  | 'quote'
+  | 'code'
+  | 'table'
+  | 'hr'
+  | 'blank'
+
+/** Parser output before block ids are assigned by NoteBlockRegistry.reconcile. */
+export interface ParsedNoteBlock {
+  kind: NoteBlockKind
+  from: number
+  to: number
+  text: string
+}

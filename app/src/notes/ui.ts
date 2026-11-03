@@ -18,6 +18,12 @@ export interface NoteFocusRequest {
   nonce: number
 }
 
+export interface NoteCaretRequest {
+  noteId: string
+  offset: number
+  nonce: number
+}
+
 export interface NoteHighlight {
   noteId: string
   blockId: string
@@ -43,6 +49,8 @@ export interface UndoBanner {
 interface NoteUi {
   focus: NoteFocusRequest | null
   highlight: NoteHighlight | null
+  /** Move the caret only when the note editor already has focus. */
+  caret: NoteCaretRequest | null
   feedback: CaptureFeedback | null
   undoBanner: UndoBanner | null
   switcherOpen: boolean
@@ -52,6 +60,7 @@ interface NoteUi {
   lastTargetNoteId: string | null
 
   requestFocus: (noteId: string, target: NoteFocusRequest['target'], blockId?: string) => void
+  requestCaret: (noteId: string, offset: number) => void
   flashInsert: (noteId: string, blockId: string, from: number, to: number) => void
   setFeedback: (feedback: CaptureFeedback | null) => void
   showUndo: (banner: UndoBanner | null) => void
@@ -70,6 +79,7 @@ let nonce = 0
 export const useNoteUi = create<NoteUi>((set) => ({
   focus: null,
   highlight: null,
+  caret: null,
   feedback: null,
   undoBanner: null,
   switcherOpen: false,
@@ -78,6 +88,7 @@ export const useNoteUi = create<NoteUi>((set) => ({
   lastTargetNoteId: null,
 
   requestFocus: (noteId, target, blockId) => set({ focus: { noteId, target, blockId, nonce: ++nonce } }),
+    requestCaret: (noteId, offset) => set({ caret: { noteId, offset, nonce: ++nonce } }),
   flashInsert: (noteId, blockId, from, to) => set({ highlight: { noteId, blockId, from, to, nonce: ++nonce } }),
   setFeedback: (feedback) => set({ feedback }),
   showUndo: (undoBanner) => set({ undoBanner }),

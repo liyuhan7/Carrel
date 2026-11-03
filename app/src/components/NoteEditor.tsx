@@ -35,6 +35,7 @@ export function NoteEditor ({ note, variant }: { note: Note; variant: 'pane' | '
   const storedBlocks = useStore((s) => s.noteBlocks[note.id])
   const uiFocus = useNoteUi((s) => s.focus)
   const highlight = useNoteUi((s) => s.highlight)
+  const caretRequest = useNoteUi((s) => s.caret)
   // <<< integration:note-capture-editing
 
   const [mode, setMode] = useState<'edit' | 'preview'>('edit')
@@ -115,13 +116,13 @@ export function NoteEditor ({ note, variant }: { note: Note; variant: 'pane' | '
   )
 
   const scrollToOffset = (offset: number) => {
-    const container = bodyRef.current
     const area = areaRef.current
-    if (!container || !area) return
-    const total = area.offsetHeight - container.clientHeight
-    if (total <= 0 || note.body.length === 0) return
+    if (!area || note.body.length === 0) return
+    // The textarea scrolls internally; .note-body never overflows.
+    const total = area.scrollHeight - area.clientHeight
+    if (total <= 0) return
     const ratio = Math.max(0, Math.min(1, offset / note.body.length))
-    container.scrollTop = ratio * total
+    area.scrollTop = ratio * total
   }
 
   const trackSelection = () => {
@@ -131,7 +132,7 @@ export function NoteEditor ({ note, variant }: { note: Note; variant: 'pane' | '
   }
 
   const trackScroll = () => {
-    if (bodyRef.current) noteSessions.setScroll(note.id, bodyRef.current.scrollTop)
+    if (areaRef.current) noteSessions.setScroll(note.id, areaRef.current.scrollTop)
   }
 
   // Opening or switching notes restores block, caret and scroll from the session.
@@ -140,8 +141,10 @@ export function NoteEditor ({ note, variant }: { note: Note; variant: 'pane' | '
     if (composingRef.current) return
     const restored = noteSessions.restore(note.id, note.body)
     const area = areaRef.current
-    if (area) area.setSelectionRange(restored.selection.from, restored.selection.to)
-    if (bodyRef.current) bodyRef.current.scrollTop = restored.scrollTop
+    if (area) {
+      area.setSelectionRange(restored.selection.from, restored.selection.to)
+      area.scrollTop = restored.scrollTop
+    }
     lastBodyRef.current = note.body
     setFlash('')
     noteSessions.flush(note.id)
@@ -149,19 +152,25 @@ export function NoteEditor ({ note, variant }: { note: Note; variant: 'pane' | '
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [note.id])
 
-  // External writes (captures) must not fight an in-flight IME composition.
+  // External writes (captures, undo) keep the session body in sync. The caret is
+  // moved only through an explicit request, never from a stale stored offset.
   useEffect(() => {
     if (noteSessions.get(note.id)?.body !== note.body) noteSessions.syncBody(note.id, note.body)
-    if (lastBodyRef.current === note.body) return
     lastBodyRef.current = note.body
-    if (composingRef.current) return
-    const area = areaRef.current
-    const position = useStore.getState().notePositions[note.id]
-    if (area && document.activeElement === area && position?.selection) {
-      area.setSelectionRange(position.selection.from, position.selection.to)
-      noteSessions.setSelection(note.id, position.selection.from, position.selection.to)
-    }
   }, [note.body, note.id])
+
+  // Explicit caret request (after an insert or undo). Never steals focus.
+  useEffect(() => {
+    const request = caretRequest
+    if (!request || request.noteId !== note.id) return
+    const area = areaRef.current
+    if (!area || document.activeElement !== area) return
+    const offset = Math.max(0, Math.min(request.offset, note.body.length))
+    area.setSelectionRange(offset, offset)
+    noteSessions.setSelection(note.id, offset, offset)
+    requestAnimationFrame(() => scrollToOffset(offset))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [caretRequest?.nonce])
 
   // "打开" / "继续写" focuses the title or the caret after an inserted block.
   useEffect(() => {
@@ -174,7 +183,14 @@ export function NoteEditor ({ note, variant }: { note: Note; variant: 'pane' | '
     const area = areaRef.current
     if (!area) return
     const block = uiFocus.blockId ? (storedBlocks ?? []).find((item) => item.blockId === uiFocus.blockId) : undefined
-    const caret = block ? block.to : note.body.length
+    // Prefer the stored writing position: it already points at the blank line
+    // after an inserted block instead of the end of the block text.
+    const stored = useStore.getState().notePositions[note.id]
+    const caret = stored?.selection
+      ? Math.min(stored.selection.from, note.body.length)
+      : block
+        ? block.to
+        : note.body.length
     setMode('edit')
     area.focus()
     area.setSelectionRange(caret, caret)
@@ -183,15 +199,11 @@ export function NoteEditor ({ note, variant }: { note: Note; variant: 'pane' | '
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [uiFocus?.nonce])
 
-  // A visible note flashes the inserted block: select it and scroll to it.
+  // A visible note reveals the inserted block without touching the caret:
+  // selecting the new text would make the next keystroke overwrite it.
   useEffect(() => {
     if (!highlight || highlight.noteId !== note.id) return
-    const area = areaRef.current
-    if (area && document.activeElement === area) {
-      area.setSelectionRange(highlight.from, highlight.to)
-      noteSessions.setSelection(note.id, highlight.from, highlight.to)
-    }
-    requestAnimationFrame(() => scrollToOffset(highlight.from))
+    requestAnimationFrame(() => scrollToOffset(highlight.to))
     setFlash('已在此处插入来源')
     const timer = setTimeout(() => setFlash(''), 2400)
     return () => clearTimeout(timer)
@@ -363,6 +375,7 @@ export function NoteEditor ({ note, variant }: { note: Note; variant: 'pane' | '
             onSelect={trackSelection}
             onKeyUp={trackSelection}
             onMouseUp={trackSelection}
+            onScroll={trackScroll}
             onFocus={() => noteSessions.setFocused(note.id, true)}
             onBlur={() => {
               noteSessions.setFocused(note.id, false)

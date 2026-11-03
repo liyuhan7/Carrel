@@ -168,19 +168,22 @@ export function createNoteSessionManager (initial: SessionHooks = {}) {
           selection,
           scrollTop: position?.scrollTop ?? 0,
           focused: false,
-          writingPosition: position ?? {
+          writingPosition: {
             noteId,
             blockId: blockAtOffset(blocks, selection.from)?.blockId,
             blockOffset: 0,
             selection,
             docRevision: revision,
-            scrollTop: 0,
+            scrollTop: position?.scrollTop ?? 0,
             updatedAt: hooks.now()
           },
           undo: [],
           redo: [],
           lastCheckpointAt: 0
         }
+        // Normalise a stored position (older records may carry no selection) so
+        // every later write and restore sees a complete position.
+        session.writingPosition = positionOf(session)
         sessions.set(noteId, session)
         return session
       }

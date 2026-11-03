@@ -8,7 +8,7 @@ import type {
   CapturePlacement, InsertCaptureCommand, InsertCaptureResult, NoteBlock,
   NoteSourceCandidate, WritingPosition
 } from './contracts'
-import { reconcileBlocks, revisionOf } from './blocks.ts'
+import { blockAtOffset, reconcileBlocks, revisionOf } from './blocks.ts'
 import { computeInsertion } from './placement.ts'
 
 /** Note document change committed in the same store write as the shared slices. */
@@ -138,11 +138,16 @@ export function createNoteInsertService (deps: NoteInsertDeps) {
           nextBlocks.find((block) => block.from === insertion.from)
         if (!insertedBlock) throw new Error('插入失败：无法定位新块')
 
+        // The caret goes to the empty line after the inserted block, never
+        // inside the source line and never back into the quote.
+        let caret = insertion.to
+        while (caret < insertion.body.length && insertion.body[caret] === '\n') caret += 1
+        const caretBlock = blockAtOffset(nextBlocks, caret) ?? insertedBlock
         const position: WritingPosition = {
           noteId: command.targetNoteId,
-          blockId: insertedBlock.blockId,
-          blockOffset: insertion.to - insertedBlock.from,
-          selection: { from: insertion.to, to: insertion.to },
+          blockId: caretBlock.blockId,
+          blockOffset: Math.max(0, caret - caretBlock.from),
+          selection: { from: caret, to: caret },
           docRevision: nextRevision,
           scrollTop: previousPosition.scrollTop,
           updatedAt: deps.now()

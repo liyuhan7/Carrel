@@ -301,8 +301,14 @@ test('insertCapture stages body, block map and source link together', async () =
   const insertedBlock = staged.blocks.find((block) => block.blockId === result.insertedBlockId)
   assert.ok(insertedBlock)
   assert.equal(insertedBlock.from, result.insertedRange.from)
-  assert.equal(staged.position.blockId, result.insertedBlockId)
-  assert.equal(staged.position.selection.from, result.insertedRange.to)
+  // The caret lands on the empty line after the inserted block, not inside it.
+  assert.ok(staged.position.selection.from >= result.insertedRange.to)
+  const caretBlock = staged.blocks.find((block) => block.blockId === staged.position.blockId)
+  assert.ok(caretBlock, 'the writing position must point at the block that holds the caret')
+  assert.ok(
+    staged.position.selection.from >= caretBlock.from &&
+      staged.position.selection.from <= caretBlock.to
+  )
   assert.equal(result.placementFallback, false)
 })
 

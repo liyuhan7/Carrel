@@ -1002,6 +1002,10 @@ export const useStore = create<Store>((set, get) => {
         )
       }
       useNoteUi.getState().setTargetNote(note.id)
+      const committedPosition = get().notePositions[note.id]
+      if (committedPosition?.selection) {
+        useNoteUi.getState().requestCaret(note.id, committedPosition.selection.from)
+      }
       return result
     },
 
@@ -1012,6 +1016,9 @@ export const useStore = create<Store>((set, get) => {
       if (!committed) return false
       noteSessions.forceBody(committed.noteId, committed.body, committed.blocks, committed.position)
       noteSessions.forgetOperation(committed.noteId, operationId)
+      if (committed.position?.selection) {
+        useNoteUi.getState().requestCaret(committed.noteId, committed.position.selection.from)
+      }
       return true
     },
 
@@ -1031,6 +1038,7 @@ export const useStore = create<Store>((set, get) => {
       if (!popped) return
       get().updateNote(noteId, { body: popped.body })
       noteSessions.setSelection(noteId, popped.selection.from, popped.selection.to)
+      useNoteUi.getState().requestCaret(noteId, popped.selection.from)
     },
 
     redoNoteEdit: (noteId) => {
@@ -1038,6 +1046,7 @@ export const useStore = create<Store>((set, get) => {
       if (!entry) return
       get().updateNote(noteId, { body: entry.body })
       noteSessions.setSelection(noteId, entry.selection.from, entry.selection.to)
+      useNoteUi.getState().requestCaret(noteId, entry.selection.from)
     },
 
     saveNotePosition: (noteId, position, blocks) => {

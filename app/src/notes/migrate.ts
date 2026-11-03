@@ -40,7 +40,8 @@ export function ensureNoteState (
       nextPositions[note.id] = {
         noteId: note.id,
         blockId: last?.blockId,
-        blockOffset: 0,
+        blockOffset: last ? last.text.length : 0,
+        selection: { from: last?.to ?? 0, to: last?.to ?? 0 },
         docRevision: revision,
         scrollTop: 0,
         updatedAt: deps.now()

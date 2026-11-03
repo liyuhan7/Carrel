@@ -2,6 +2,10 @@ import { useMemo, useState } from 'react'
 import { useStore } from '../store'
 import { NoteEditor } from './NoteEditor'
 import { formatTime, truncate } from '../lib/format'
+// >>> integration:note-capture-editing
+import { NoteModuleHost, NoteTabs } from '../notes/NoteModuleHost'
+import { SourceInsertButton } from '../notes/SourceInsertButton'
+// <<< integration:note-capture-editing
 
 const plain = (body: string) => body.replace(/[#>*`\n\-[\]()]/g, ' ').replace(/\s+/g, ' ').trim()
 
@@ -22,15 +26,27 @@ export function NotesPage () {
 
   return (
     <div className="page notes-page">
+      {/* >>> integration:note-capture-editing */}
+      <NoteModuleHost />
+      {/* <<< integration:note-capture-editing */}
       <div className="page-head">
         <div>
           <h1>笔记</h1>
           <p className="page-sub">{notes.length} 份笔记 · 自动保存</p>
         </div>
-        <button type="button" className="btn btn-primary" onClick={() => createNote()}>
-          新建笔记
-        </button>
+        {/* >>> integration:note-capture-editing */}
+        <div className="row">
+          <SourceInsertButton />
+          <button type="button" className="btn btn-primary" onClick={() => createNote()}>
+            新建笔记
+          </button>
+        </div>
+        {/* <<< integration:note-capture-editing */}
       </div>
+
+      {/* >>> integration:note-capture-editing */}
+      <NoteTabs />
+      {/* <<< integration:note-capture-editing */}
 
       <div className="notes-layout">
         <aside className="notes-list">
@@ -61,7 +77,10 @@ export function NotesPage () {
 
         <section className="notes-detail">
           {active ? (
-            <NoteEditor key={active.id} note={active} variant="page" />
+            // >>> integration:note-capture-editing
+            // No key: the note session restores caret and scroll without re-mounting.
+            <NoteEditor note={active} variant="page" />
+            // <<< integration:note-capture-editing
           ) : (
             <div className="empty-block">
               <h2>还没有笔记</h2>

@@ -1,3 +1,8 @@
+import type { Anchor, ContentLink, Resource } from './shared/contracts/content'
+// >>> integration:note-capture-editing
+import type { NoteBlock, WritingPosition } from './notes/contracts'
+// <<< integration:note-capture-editing
+
 export type FileKind = 'pdf' | 'md' | 'image' | 'other'
 
 export interface FileRec {
@@ -276,13 +281,38 @@ export interface WorkspaceState {
   readerPanel: 'doc' | 'ann'
   /** Send a rendered page image along with the text when the model accepts it. */
   attachPageImage: boolean
+  // >>> integration:note-capture-editing
+  /** Recent note tabs, least recently used first; capped at five. */
+  noteTabs?: string[]
+  // <<< integration:note-capture-editing
 }
+
+// >>> integration:note-capture-editing
+/** Soft-deleted note; kept so deletion stays recoverable. */
+export interface TrashedNote extends Note {
+  deletedAt: number
+}
+// <<< integration:note-capture-editing
 
 export interface PersistedState {
   files: FileRec[]
   notes: Note[]
   annotations: Annotation[]
   messages: ChatMessage[]
+  // >>> integration:note-capture-editing
+  /** Structural block map per note; see notes/contracts.ts NoteBlock. */
+  noteBlocks: Record<string, NoteBlock[]>
+  /** Last writing position per note; the target for external captures. */
+  notePositions: Record<string, WritingPosition>
+  /** Recoverable note trash; deleting a note never drops its content. */
+  noteTrash: TrashedNote[]
+  // <<< integration:note-capture-editing
+  /** Unified content identity; see shared/contracts/content.ts. */
+  resources: Record<string, Resource>
+  /** Persisted positions referenced by annotations and links. */
+  anchors: Record<string, Anchor>
+  /** Explicit relations only; never inferred from similarity. */
+  links: Record<string, ContentLink>
   connections: ProviderConnection[]
   activeModel: ActiveModel
   workspace: WorkspaceState

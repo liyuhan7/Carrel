@@ -11,6 +11,27 @@ import {
 import { extractPageTexts, loadPdf, renderPageImage, type PageImage } from './lib/pdf'
 import { parseAnswer } from './lib/verify'
 import { uid } from './lib/format'
+import type {
+  AnchorService, LinkService, NavigationService, Resource, ResourceRef, ResourceRegistry,
+  StateTransactionService
+} from './shared/contracts/content'
+import {
+  createAnchorService, createLinkService, createNavigationService, createResourceRegistry,
+  createTransactionService, type SharedDataPort
+} from './shared/services'
+// >>> integration:note-capture-editing
+import { noteSessions } from './notes/session'
+import { createNoteInsertService, type NoteDocumentCommit } from './notes/insertService'
+import { ensureNoteState } from './notes/migrate'
+import { revisionOf } from './notes/blocks'
+import {
+  buildCaptureMarkdown, capturePlacement, captureTargetNoteId, sourceLabel, stripCiteMarkers
+} from './notes/capture'
+import { useNoteUi } from './notes/ui'
+import type {
+  InsertCaptureCommand, InsertCaptureResult, NoteBlock, NoteSourceCandidate, WritingPosition
+} from './notes/contracts'
+// <<< integration:note-capture-editing
 
 export type View = 'home' | 'workspace' | 'library' | 'notes'
 
@@ -31,6 +52,12 @@ interface Store extends PersistedState {
   settingsOpen: boolean
   settingsConnection: string | null
   rewrite: RewriteState | null
+  /** Shared content services; see shared/services/. */
+  resourceRegistry: ResourceRegistry
+  anchorService: AnchorService
+  linkService: LinkService
+  navigation: NavigationService
+  transactions: StateTransactionService
 
   hydrate: () => Promise<void>
   openSettings: (connectionId?: string) => void
@@ -63,6 +90,18 @@ interface Store extends PersistedState {
   insertToNote: (noteId: string | null, markdown: string, refs?: Omit<NoteRef, 'id' | 'createdAt'>[]) => string
   insertSelectionToNote: () => void
   insertAnswerToNote: (messageId: string) => void
+  // >>> integration:note-capture-editing
+  /** Single insert command for reader captures, AI drafts and in-note sources. */
+  insertCapture: (command: InsertCaptureCommand) => Promise<InsertCaptureResult>
+  undoInsert: (operationId: string) => Promise<boolean>
+  undoNoteEdit: (noteId: string) => Promise<void>
+  redoNoteEdit: (noteId: string) => void
+  saveNotePosition: (noteId: string, position: WritingPosition, blocks: NoteBlock[]) => void
+  ensureResource: (ref: ResourceRef & { title?: string }) => Promise<Resource>
+  closeNoteTab: (id: string) => void
+  restoreNote: (id: string) => void
+  restoreLastDeleted: () => void
+  // <<< integration:note-capture-editing
 
   setActiveModel: (connectionId: string, modelId: string) => void
   updateConnection: (id: string, patch: Partial<ProviderConnection>) => void
@@ -111,6 +150,21 @@ function kindOf (ext: string): FileKind {
   return 'other'
 }
 
+// >>> integration:note-capture-editing
+/** Note document staged by an insert command and committed by the shared port write. */
+let pendingNoteDocument: NoteDocumentCommit | null = null
+
+function stageNoteDocument (doc: NoteDocumentCommit | null): void {
+  pendingNoteDocument = doc
+}
+
+/** Most recently used note tabs, capped at five; dropping a tab keeps the note. */
+function nextTabs (tabs: string[] | undefined, id: string): string[] {
+  const rest = (tabs ?? []).filter((item) => item !== id)
+  return [...rest, id].slice(-5)
+}
+// <<< integration:note-capture-editing
+
 function starterNote (): Note {
   const now = Date.now()
   return {
@@ -129,6 +183,14 @@ function snapshot (state: Store): PersistedState {
     notes: state.notes,
     annotations: state.annotations,
     messages: state.messages,
+    // >>> integration:note-capture-editing
+    noteBlocks: state.noteBlocks,
+    notePositions: state.notePositions,
+    noteTrash: state.noteTrash,
+    // <<< integration:note-capture-editing
+    resources: state.resources,
+    anchors: state.anchors,
+    links: state.links,
     connections: state.connections.map(({ hasKey: _hasKey, ...rest }) => rest),
     activeModel: state.activeModel,
     workspace: state.workspace
@@ -177,11 +239,111 @@ export const useStore = create<Store>((set, get) => {
   }
   ;(globalThis as unknown as { __csFlush: () => Promise<void> }).__csFlush = flush
 
+  const sharedPort: SharedDataPort = {
+    read: () => ({ resources: get().resources, anchors: get().anchors, links: get().links }),
+    write: (next) => {
+      // >>> integration:note-capture-editing
+      const staged = pendingNoteDocument
+      pendingNoteDocument = null
+      if (staged) {
+        set((state) => ({
+          resources: next.resources,
+          anchors: next.anchors,
+          links: next.links,
+          notes: state.notes.map((note) =>
+            note.id === staged.noteId ? { ...note, body: staged.body, updatedAt: Date.now() } : note
+          ),
+          noteBlocks: { ...state.noteBlocks, [staged.noteId]: staged.blocks },
+          notePositions: { ...state.notePositions, [staged.noteId]: staged.position }
+        }))
+      } else {
+        set({ resources: next.resources, anchors: next.anchors, links: next.links })
+      }
+      // <<< integration:note-capture-editing
+      persist()
+    },
+    // Annotations are migrated to anchorId by the reading module; tolerate both shapes.
+    isAnchorUsed: (anchorId) =>
+      get().annotations.some((item) => (item as { anchorId?: string }).anchorId === anchorId),
+    now: () => Date.now(),
+    nextId: () => uid()
+  }
+  const resourceRegistry = createResourceRegistry(sharedPort)
+  const anchorService = createAnchorService(sharedPort)
+  const linkService = createLinkService(sharedPort)
+  const transactions = createTransactionService(sharedPort)
+  const navigation = createNavigationService(sharedPort, {
+    async openDocument (sourceId, location) {
+      if (!get().files.some((item) => item.id === sourceId)) throw new Error('来源文件不可访问')
+      if (!get().workspace.tabs.includes(sourceId)) await get().openFile(sourceId)
+      if (location?.page) get().setPage(sourceId, location.page)
+      if (location?.quote) get().focusOn(sourceId, location.page ?? 1, location.quote)
+    },
+    openNote (sourceId) {
+      get().selectNote(sourceId)
+      set({ view: 'notes' })
+    },
+    openConversation () {
+      set({ view: 'workspace' })
+    }
+  })
+
+  // >>> integration:note-capture-editing
+  noteSessions.configure({
+    readPosition: (noteId) => get().notePositions[noteId],
+    persist: (noteId, position, blocks) => {
+      set((state) => ({
+        notePositions: { ...state.notePositions, [noteId]: position },
+        noteBlocks: { ...state.noteBlocks, [noteId]: blocks }
+      }))
+      persist()
+    },
+    now: () => Date.now(),
+    nextId: () => uid()
+  })
+
+  const noteInsert = createNoteInsertService({
+    readNote: (noteId) => {
+      const note = get().notes.find((item) => item.id === noteId)
+      return note ? { body: note.body, title: note.title } : undefined
+    },
+    readBlocks: (noteId) => get().noteBlocks[noteId] ?? [],
+    readPosition: (noteId) => get().notePositions[noteId],
+    readResource: (resourceId) => get().resources[resourceId],
+    readNoteResourceId: (noteId) =>
+      Object.values(get().resources).find(
+        (resource) => resource.kind === 'note' && resource.sourceId === noteId
+      )?.id,
+    stageNoteDocument,
+    anchorService,
+    linkService,
+    now: () => Date.now(),
+    nextId: () => uid()
+  })
+
+  /** ResourceRegistry only takes a ResourceRef; keep the human title for source labels. */
+  const ensureResource = async (ref: ResourceRef & { title?: string }): Promise<Resource> => {
+    const resource = await resourceRegistry.ensureResource(ref)
+    if (!ref.title || resource.title === ref.title) return resource
+    const next: Resource = { ...resource, title: ref.title, updatedAt: Date.now() }
+    sharedPort.write({ ...sharedPort.read(), resources: { ...get().resources, [next.id]: next } })
+    return next
+  }
+  // <<< integration:note-capture-editing
+
   return {
     files: [],
     notes: [],
     annotations: [],
     messages: [],
+    // >>> integration:note-capture-editing
+    noteBlocks: {},
+    notePositions: {},
+    noteTrash: [],
+    // <<< integration:note-capture-editing
+    resources: {},
+    anchors: {},
+    links: {},
     connections: DEFAULT_CONNECTIONS,
     activeModel: DEFAULT_ACTIVE_MODEL,
     workspace: {
@@ -194,6 +356,11 @@ export const useStore = create<Store>((set, get) => {
       readerPanel: 'doc',
       attachPageImage: false
     },
+    resourceRegistry,
+    anchorService,
+    linkService,
+    navigation,
+    transactions,
     hydrated: false,
     view: 'home',
     saveStatus: 'saved',
@@ -232,6 +399,14 @@ export const useStore = create<Store>((set, get) => {
           notes: state.notes ?? [],
           annotations: state.annotations ?? [],
           messages: state.messages ?? [],
+          // >>> integration:note-capture-editing
+          noteBlocks: state.noteBlocks ?? {},
+          notePositions: state.notePositions ?? {},
+          noteTrash: state.noteTrash ?? [],
+          // <<< integration:note-capture-editing
+          resources: state.resources ?? {},
+          anchors: state.anchors ?? {},
+          links: state.links ?? {},
           workspace: { ...defaults, ...state.workspace },
           connections: connections.map((item) => withAuth(item, auth[item.id])),
           activeModel,
@@ -257,6 +432,23 @@ export const useStore = create<Store>((set, get) => {
           hydrated: true
         })
       }
+      // >>> integration:note-capture-editing
+      // Idempotent: fills block maps and writing positions for notes that predate them.
+      const migrated = ensureNoteState(get().notes, get().noteBlocks, get().notePositions, {
+        now: () => Date.now(),
+        nextId: () => uid()
+      })
+      const knownNotes = new Set(get().notes.map((note) => note.id))
+      const tabs = (get().workspace.noteTabs ?? []).filter((id) => knownNotes.has(id)).slice(-5)
+      set({
+        noteBlocks: migrated.blocks,
+        notePositions: migrated.positions,
+        workspace: {
+          ...get().workspace,
+          noteTabs: tabs.length > 0 ? tabs : get().notes.slice(0, 5).map((note) => note.id)
+        }
+      })
+      // <<< integration:note-capture-editing
     },
 
     setView: (view) => set({ view }),
@@ -432,18 +624,36 @@ export const useStore = create<Store>((set, get) => {
       persist()
     },
 
+    // >>> integration:note-capture-editing
     createNote: (title = '未命名笔记') => {
       const now = Date.now()
       const note: Note = { id: uid(), title, body: '', refs: [], createdAt: now, updatedAt: now }
-      set((s) => ({ notes: [note, ...s.notes], workspace: { ...s.workspace, activeNoteId: note.id } }))
+      set((s) => ({
+        notes: [note, ...s.notes],
+        workspace: { ...s.workspace, activeNoteId: note.id, noteTabs: nextTabs(s.workspace.noteTabs, note.id) },
+        noteBlocks: { ...s.noteBlocks, [note.id]: [] },
+        notePositions: {
+          ...s.notePositions,
+          [note.id]: {
+            noteId: note.id,
+            docRevision: revisionOf(''),
+            selection: { from: 0, to: 0 },
+            scrollTop: 0,
+            updatedAt: now
+          }
+        }
+      }))
       persist()
       return note.id
     },
 
     selectNote: (id) => {
-      set((s) => ({ workspace: { ...s.workspace, activeNoteId: id } }))
+      set((s) => ({
+        workspace: { ...s.workspace, activeNoteId: id, noteTabs: nextTabs(s.workspace.noteTabs, id) }
+      }))
       persist()
     },
+    // <<< integration:note-capture-editing
 
     updateNote: (id, patch) => {
       set((s) => ({
@@ -452,66 +662,246 @@ export const useStore = create<Store>((set, get) => {
       persist()
     },
 
+    // >>> integration:note-capture-editing
     deleteNote: (id) => {
+      const note = get().notes.find((item) => item.id === id)
+      if (!note) return
+      const deletedAt = Date.now()
       set((s) => {
         const notes = s.notes.filter((n) => n.id !== id)
         const activeNoteId = s.workspace.activeNoteId === id ? notes[0]?.id ?? null : s.workspace.activeNoteId
-        return { notes, workspace: { ...s.workspace, activeNoteId } }
+        return {
+          notes,
+          noteTrash: [{ ...note, deletedAt }, ...s.noteTrash],
+          workspace: {
+            ...s.workspace,
+            activeNoteId,
+            noteTabs: (s.workspace.noteTabs ?? []).filter((item) => item !== id)
+          }
+        }
       })
+      persist()
+      useNoteUi.getState().showUndo({ noteId: id, title: note.title || '未命名笔记', at: deletedAt })
+      get().notify(`已删除《${note.title || '未命名笔记'}》，可撤销恢复`)
+    },
+
+    restoreNote: (id) => {
+      const trashed = get().noteTrash.find((item) => item.id === id)
+      if (!trashed) return
+      const { deletedAt: _deletedAt, ...note } = trashed
+      set((s) => ({
+        notes: [note, ...s.notes],
+        noteTrash: s.noteTrash.filter((item) => item.id !== id),
+        workspace: { ...s.workspace, activeNoteId: id, noteTabs: nextTabs(s.workspace.noteTabs, id) }
+      }))
+      persist()
+      get().notify('已恢复笔记')
+    },
+
+    restoreLastDeleted: () => {
+      const banner = useNoteUi.getState().undoBanner
+      if (!banner) return
+      get().restoreNote(banner.noteId)
+      useNoteUi.getState().showUndo(null)
+    },
+
+    insertCapture: async (command) => {
+      const state = get()
+      const note = state.notes.find((item) => item.id === command.targetNoteId)
+      if (!note) throw new Error('目标笔记不存在')
+      await ensureResource({ kind: 'note', sourceId: note.id, title: note.title })
+      const operationId = command.operationId ?? uid()
+      const before = note.body
+      const result = await get().transactions.run(operationId, (tx) =>
+        noteInsert.insertCapture({ ...command, operationId }, tx)
+      )
+      const after = get().notes.find((item) => item.id === note.id)
+      if (after) {
+        noteSessions.acceptExternalChange(
+          note.id,
+          before,
+          after.body,
+          get().noteBlocks[note.id],
+          get().notePositions[note.id],
+          operationId
+        )
+      }
+      useNoteUi.getState().setTargetNote(note.id)
+      return result
+    },
+
+    undoInsert: async (operationId) => {
+      const committed = await get().transactions.run(`${operationId}:undo`, (tx) =>
+        noteInsert.undo(operationId, tx)
+      )
+      if (!committed) return false
+      noteSessions.forceBody(committed.noteId, committed.body, committed.blocks, committed.position)
+      noteSessions.forgetOperation(committed.noteId, operationId)
+      return true
+    },
+
+    undoNoteEdit: async (noteId) => {
+      const entry = noteSessions.peekUndo(noteId)
+      if (!entry) return
+      if (entry.operationId) {
+        const ok = await get().undoInsert(entry.operationId)
+        if (!ok) {
+          get().notify('这条插入记录已失效，无法撤销来源链接', 'error')
+          return
+        }
+        noteSessions.commitUndo(noteId)
+        return
+      }
+      const popped = noteSessions.commitUndo(noteId)
+      if (!popped) return
+      get().updateNote(noteId, { body: popped.body })
+      noteSessions.setSelection(noteId, popped.selection.from, popped.selection.to)
+    },
+
+    redoNoteEdit: (noteId) => {
+      const entry = noteSessions.redo(noteId)
+      if (!entry) return
+      get().updateNote(noteId, { body: entry.body })
+      noteSessions.setSelection(noteId, entry.selection.from, entry.selection.to)
+    },
+
+    saveNotePosition: (noteId, position, blocks) => {
+      set((state) => ({
+        notePositions: { ...state.notePositions, [noteId]: position },
+        noteBlocks: { ...state.noteBlocks, [noteId]: blocks }
+      }))
       persist()
     },
 
-    insertToNote: (noteId, markdown, refs = []) => {
-      const state = get()
-      const id = noteId ?? state.createNote()
-      const note = get().notes.find((n) => n.id === id)
-      if (!note) return id
-      const newRefs: NoteRef[] = refs.map((r) => ({ ...r, id: uid().slice(0, 8), createdAt: Date.now() }))
-      const block = newRefs.length ? markdown.trim().replace(/csref:NEW/g, 'csref:' + newRefs[0].id) : markdown.trim()
-      const body = `${note.body.trimEnd()}\n\n${block}\n`
+    ensureResource: (ref) => ensureResource(ref),
+
+    closeNoteTab: (id) => {
       set((s) => ({
-        notes: s.notes.map((n) => (n.id === id ? { ...n, body, refs: [...n.refs, ...newRefs], updatedAt: Date.now() } : n)),
-        workspace: { ...s.workspace, activeNoteId: id }
+        workspace: { ...s.workspace, noteTabs: (s.workspace.noteTabs ?? []).filter((item) => item !== id) }
       }))
       persist()
+    },
+
+    /** Legacy API: routes through the single insert command. */
+    insertToNote: (noteId, markdown, refs = []) => {
+      const id = noteId ?? get().createNote()
+      if (!get().notes.some((n) => n.id === id)) return id
+      const placement = capturePlacement(get().notePositions[id], get().noteBlocks[id] ?? [])
+      void (async () => {
+        try {
+          const candidates: NoteSourceCandidate[] = []
+          for (const ref of refs) {
+            const file = get().files.find((item) => item.id === ref.fileId)
+            if (!file) continue
+            const resource = await ensureResource({ kind: 'document', sourceId: file.id, title: file.name })
+            candidates.push({
+              resourceId: resource.id,
+              selector: { type: 'document-text', page: ref.page, quote: { exact: ref.quote } },
+              relation: 'quotes',
+              selected: true
+            })
+          }
+          await get().insertCapture({
+            targetNoteId: id,
+            placement,
+            contentMarkdown: markdown,
+            sourceCandidates: candidates,
+            operationId: uid()
+          })
+        } catch (error) {
+          get().notify((error as Error).message || '插入失败', 'error')
+        }
+      })()
       return id
     },
 
+    /** Legacy API: reader selection capture through the single insert command. */
     insertSelectionToNote: () => {
       const { selection, files } = get()
       if (!selection) return
       const file = files.find((f) => f.id === selection.fileId)
       if (!file) return
-      const label = `${file.name} · 第 ${selection.page} 页`
-      const markdown = `> ${selection.text}
-
-[来源：${label}](csref:NEW)`
-      get().insertToNote(get().workspace.activeNoteId, markdown, [
-        { fileId: file.id, page: selection.page, quote: selection.text, label }
-      ])
-      get().notify('已加入笔记')
+      const targetId = captureTargetNoteId(get().notes, get().workspace.activeNoteId, useNoteUi.getState().lastTargetNoteId)
+      if (!targetId) {
+        get().notify('先新建一份笔记', 'error')
+        return
+      }
+      const label = sourceLabel(file.name, selection.page)
+      const markdown = buildCaptureMarkdown({ quote: selection.text, label, withSource: true })
+      const placement = capturePlacement(get().notePositions[targetId], get().noteBlocks[targetId] ?? [])
+      const operationId = uid()
       set({ selection: null })
+      void (async () => {
+        try {
+          const resource = await ensureResource({ kind: 'document', sourceId: file.id, title: file.name })
+          const result = await get().insertCapture({
+            targetNoteId: targetId,
+            placement,
+            contentMarkdown: markdown,
+            sourceCandidates: [{
+              resourceId: resource.id,
+              selector: { type: 'document-text', page: selection.page, quote: { exact: selection.text } },
+              relation: 'quotes',
+              selected: true
+            }],
+            operationId
+          })
+          const title = get().notes.find((item) => item.id === targetId)?.title ?? '笔记'
+          useNoteUi.getState().setFeedback({
+            noteId: targetId,
+            blockId: result.insertedBlockId,
+            operationId,
+            label: `已加入《${title}》`,
+            at: Date.now()
+          })
+          useNoteUi.getState().flashInsert(targetId, result.insertedBlockId, result.insertedRange.from, result.insertedRange.to)
+          get().notify('已加入笔记')
+        } catch (error) {
+          get().notify((error as Error).message || '插入失败', 'error')
+        }
+      })()
     },
 
+    /** Legacy API: direct answer insert, kept for callers that bypass the draft. */
     insertAnswerToNote: (messageId) => {
       const message = get().messages.find((m) => m.id === messageId)
       if (!message) return
       const file = get().files.find((f) => f.id === message.fileId) ?? get().files.find((f) => f.id === get().workspace.activeTab)
-      const refs = (message.citations || []).filter((c) => c.verified).map((c) => ({
-        fileId: file?.id ?? '',
-        page: c.page,
-        quote: c.quote,
-        label: file ? `${file.name} · 第 ${c.page} 页` : `第 ${c.page} 页`
-      }))
-      const sourceLine = refs.length && file
-        ? `
-
-[来源：${file.name} · 第 ${refs[0].page} 页](csref:NEW)`
+      const targetId = captureTargetNoteId(get().notes, get().workspace.activeNoteId, useNoteUi.getState().lastTargetNoteId)
+      if (!targetId) return
+      const body = stripCiteMarkers(message.content)
+      const citations = (message.citations ?? []).filter((citation) => citation.verified)
+      const sourceLine = citations.length && file
+        ? `\n\n[来源：${sourceLabel(file.name, citations[0].page)}](csref:NEW)`
         : ''
-      const body = message.content.replace(/\[\[\s*p\s*\d+\s*\]\]/gi, '').trim()
-      get().insertToNote(get().workspace.activeNoteId, `${body}${sourceLine}`, refs)
-      get().notify('回答已加入笔记')
+      const placement = capturePlacement(get().notePositions[targetId], get().noteBlocks[targetId] ?? [])
+      void (async () => {
+        try {
+          const candidates: NoteSourceCandidate[] = []
+          for (const citation of citations) {
+            if (!file) break
+            const resource = await ensureResource({ kind: 'document', sourceId: file.id, title: file.name })
+            candidates.push({
+              resourceId: resource.id,
+              selector: { type: 'document-text', page: citation.page, quote: { exact: citation.quote } },
+              relation: 'derived_from',
+              selected: true
+            })
+          }
+          await get().insertCapture({
+            targetNoteId: targetId,
+            placement,
+            contentMarkdown: `${body}${sourceLine}`,
+            sourceCandidates: candidates,
+            operationId: uid()
+          })
+          get().notify('回答已加入笔记')
+        } catch (error) {
+          get().notify((error as Error).message || '插入失败', 'error')
+        }
+      })()
     },
+    // <<< integration:note-capture-editing
 
     setActiveModel: (connectionId, modelId) => {
       set({ activeModel: { connectionId, modelId } })

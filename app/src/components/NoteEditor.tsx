@@ -1,8 +1,14 @@
-import { useRef, useState, type MouseEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import { useStore } from '../store'
 import type { Note } from '../types'
 import { renderNote } from '../lib/markdown'
 import { formatTime, truncate } from '../lib/format'
+// >>> integration:note-capture-editing
+import { noteSessions } from '../notes/session'
+import { sourceStatus, type SourceStatusInput } from '../notes/sourceStatus'
+import { SourceInsertButton } from '../notes/SourceInsertButton'
+import { useNoteUi } from '../notes/ui'
+// <<< integration:note-capture-editing
 
 export function NoteEditor ({ note, variant }: { note: Note; variant: 'pane' | 'page' }) {
   const updateNote = useStore((s) => s.updateNote)
@@ -19,6 +25,17 @@ export function NoteEditor ({ note, variant }: { note: Note; variant: 'pane' | '
   const startRewrite = useStore((s) => s.startRewrite)
   const cancelRewrite = useStore((s) => s.cancelRewrite)
   const applyRewrite = useStore((s) => s.applyRewrite)
+  // >>> integration:note-capture-editing
+  const undoNoteEdit = useStore((s) => s.undoNoteEdit)
+  const redoNoteEdit = useStore((s) => s.redoNoteEdit)
+  const links = useStore((s) => s.links)
+  const anchors = useStore((s) => s.anchors)
+  const resources = useStore((s) => s.resources)
+  const allNotes = useStore((s) => s.notes)
+  const storedBlocks = useStore((s) => s.noteBlocks[note.id])
+  const uiFocus = useNoteUi((s) => s.focus)
+  const highlight = useNoteUi((s) => s.highlight)
+  // <<< integration:note-capture-editing
 
   const [mode, setMode] = useState<'edit' | 'preview'>('edit')
   const [panel, setPanel] = useState(false)
@@ -26,6 +43,13 @@ export function NoteEditor ({ note, variant }: { note: Note; variant: 'pane' | '
   const [range, setRange] = useState<{ start: number; end: number; text: string } | null>(null)
   const areaRef = useRef<HTMLTextAreaElement>(null)
   const previewRef = useRef<HTMLDivElement>(null)
+  // >>> integration:note-capture-editing
+  const bodyRef = useRef<HTMLDivElement>(null)
+  const titleRef = useRef<HTMLInputElement>(null)
+  const composingRef = useRef(false)
+  const lastBodyRef = useRef(note.body)
+  const [flash, setFlash] = useState('')
+  // <<< integration:note-capture-editing
 
   const wrap = (before: string, after = '') => {
     const area = areaRef.current
@@ -63,10 +87,13 @@ export function NoteEditor ({ note, variant }: { note: Note; variant: 'pane' | '
 
   const openRef = async (refId: string) => {
     const ref = note.refs.find((item) => item.id === refId)
-    if (!ref) return
+    if (!ref) {
+      notify('来源无法定位，摘录已保留', 'error')
+      return
+    }
     const file = files.find((item) => item.id === ref.fileId)
     if (!file) {
-      notify('来源资料已不在资料库中', 'error')
+      notify('来源已删除，摘录仍保留在正文中', 'error')
       return
     }
     await openFile(file.id)
@@ -74,12 +101,128 @@ export function NoteEditor ({ note, variant }: { note: Note; variant: 'pane' | '
     focusOn(file.id, ref.page, ref.quote)
   }
 
-  const onPreviewClick = (event: MouseEvent<HTMLDivElement>) => {
+  // >>> integration:note-capture-editing
+  const statusInput: SourceStatusInput = useMemo(
+    () => ({ links, anchors, resources, notes: allNotes, files, refs: note.refs }),
+    [links, anchors, resources, allNotes, files, note.refs]
+  )
+
+  const previewHtml = useMemo(
+    () => renderNote(note.body || '_还没有内容_', {
+      csref: (linkId: string) => sourceStatus(linkId, statusInput)
+    }),
+    [note.body, statusInput]
+  )
+
+  const scrollToOffset = (offset: number) => {
+    const container = bodyRef.current
+    const area = areaRef.current
+    if (!container || !area) return
+    const total = area.offsetHeight - container.clientHeight
+    if (total <= 0 || note.body.length === 0) return
+    const ratio = Math.max(0, Math.min(1, offset / note.body.length))
+    container.scrollTop = ratio * total
+  }
+
+  const trackSelection = () => {
+    const area = areaRef.current
+    if (!area || composingRef.current) return
+    noteSessions.setSelection(note.id, area.selectionStart, area.selectionEnd)
+  }
+
+  const trackScroll = () => {
+    if (bodyRef.current) noteSessions.setScroll(note.id, bodyRef.current.scrollTop)
+  }
+
+  // Opening or switching notes restores block, caret and scroll from the session.
+  useEffect(() => {
+    noteSessions.ensure(note.id, note.body, storedBlocks ?? [])
+    if (composingRef.current) return
+    const restored = noteSessions.restore(note.id, note.body)
+    const area = areaRef.current
+    if (area) area.setSelectionRange(restored.selection.from, restored.selection.to)
+    if (bodyRef.current) bodyRef.current.scrollTop = restored.scrollTop
+    lastBodyRef.current = note.body
+    setFlash('')
+    noteSessions.flush(note.id)
+    return () => noteSessions.flush(note.id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [note.id])
+
+  // External writes (captures) must not fight an in-flight IME composition.
+  useEffect(() => {
+    if (noteSessions.get(note.id)?.body !== note.body) noteSessions.syncBody(note.id, note.body)
+    if (lastBodyRef.current === note.body) return
+    lastBodyRef.current = note.body
+    if (composingRef.current) return
+    const area = areaRef.current
+    const position = useStore.getState().notePositions[note.id]
+    if (area && document.activeElement === area && position?.selection) {
+      area.setSelectionRange(position.selection.from, position.selection.to)
+      noteSessions.setSelection(note.id, position.selection.from, position.selection.to)
+    }
+  }, [note.body, note.id])
+
+  // "打开" / "继续写" focuses the title or the caret after an inserted block.
+  useEffect(() => {
+    if (!uiFocus || uiFocus.noteId !== note.id) return
+    if (uiFocus.target === 'title') {
+      titleRef.current?.focus()
+      titleRef.current?.select()
+      return
+    }
+    const area = areaRef.current
+    if (!area) return
+    const block = uiFocus.blockId ? (storedBlocks ?? []).find((item) => item.blockId === uiFocus.blockId) : undefined
+    const caret = block ? block.to : note.body.length
+    setMode('edit')
+    area.focus()
+    area.setSelectionRange(caret, caret)
+    noteSessions.setSelection(note.id, caret, caret)
+    requestAnimationFrame(() => scrollToOffset(caret))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uiFocus?.nonce])
+
+  // A visible note flashes the inserted block: select it and scroll to it.
+  useEffect(() => {
+    if (!highlight || highlight.noteId !== note.id) return
+    const area = areaRef.current
+    if (area && document.activeElement === area) {
+      area.setSelectionRange(highlight.from, highlight.to)
+      noteSessions.setSelection(note.id, highlight.from, highlight.to)
+    }
+    requestAnimationFrame(() => scrollToOffset(highlight.from))
+    setFlash('已在此处插入来源')
+    const timer = setTimeout(() => setFlash(''), 2400)
+    return () => clearTimeout(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [highlight?.nonce])
+  // <<< integration:note-capture-editing
+
+  const onPreviewClick = async (event: MouseEvent<HTMLDivElement>) => {
     const link = (event.target as HTMLElement).closest('a[data-ref]')
     if (!link) return
     event.preventDefault()
-    void openRef(link.getAttribute('data-ref') || '')
+    const linkId = link.getAttribute('data-ref') || ''
+    // >>> integration:note-capture-editing
+    const view = sourceStatus(linkId, statusInput)
+    if (view.link) {
+      try {
+        await useStore.getState().navigation.navigateToLink(linkId)
+      } catch (error) {
+        notify((error as Error).message || '无法打开来源', 'error')
+      }
+      return
+    }
+    // <<< integration:note-capture-editing
+    void openRef(linkId)
   }
+
+  // >>> integration:note-capture-editing
+  const inlineRefIds = new Set((note.body.match(/csref:([^\s)]+)/g) ?? []).map((item) => item.slice(6)))
+  const chipRefs = note.refs.filter((ref) => !inlineRefIds.has(ref.id))
+  const sourceCount = note.refs.length + inlineRefIds.size
+  // <<< integration:note-capture-editing
 
   return (
     <div className={`note-editor note-editor-${variant}`}>
@@ -89,13 +232,16 @@ export function NoteEditor ({ note, variant }: { note: Note; variant: 'pane' | '
           value={note.title}
           placeholder="笔记标题"
           aria-label="笔记标题"
+          // >>> integration:note-capture-editing
+          ref={titleRef}
+          // <<< integration:note-capture-editing
           onChange={(event) => updateNote(note.id, { title: event.target.value })}
         />
         <button
           type="button"
           className="btn btn-ghost btn-small"
           onClick={() => {
-            if (confirm(`删除笔记「${note.title || '未命名笔记'}」？`)) deleteNote(note.id)
+            if (confirm(`删除笔记「${note.title || '未命名笔记'}」？可在提示中撤销恢复`)) deleteNote(note.id)
           }}
         >
           删除
@@ -130,8 +276,12 @@ export function NoteEditor ({ note, variant }: { note: Note; variant: 'pane' | '
         <button type="button" className="btn btn-ghost btn-small" onClick={openRewrite}>
           AI 整理
         </button>
+        {/* >>> integration:note-capture-editing */}
+        <SourceInsertButton label="插入来源" />
+        {flash ? <span className="note-flash" role="status">{flash}</span> : null}
+        {/* <<< integration:note-capture-editing */}
         <div className="note-meta">
-          {note.body.length} 字 · {note.refs.length} 个来源
+          {note.body.length} 字 · {sourceCount} 个来源
         </div>
       </div>
 
@@ -196,7 +346,7 @@ export function NoteEditor ({ note, variant }: { note: Note; variant: 'pane' | '
         </div>
       ) : null}
 
-      <div className="note-body">
+      <div className="note-body" ref={bodyRef} onScroll={trackScroll}>
         {mode === 'edit' ? (
           <textarea
             ref={areaRef}
@@ -204,29 +354,73 @@ export function NoteEditor ({ note, variant }: { note: Note; variant: 'pane' | '
             value={note.body}
             placeholder="记录阅读中的概念、疑问和自己的理解…"
             spellCheck={false}
-            onChange={(event) => updateNote(note.id, { body: event.target.value })}
+            // >>> integration:note-capture-editing
+            onChange={(event) => {
+              const value = event.target.value
+              noteSessions.syncBody(note.id, value)
+              updateNote(note.id, { body: value })
+            }}
+            onSelect={trackSelection}
+            onKeyUp={trackSelection}
+            onMouseUp={trackSelection}
+            onFocus={() => noteSessions.setFocused(note.id, true)}
+            onBlur={() => {
+              noteSessions.setFocused(note.id, false)
+              trackSelection()
+              noteSessions.flush(note.id)
+            }}
+            onCompositionStart={() => { composingRef.current = true }}
+            onCompositionEnd={() => {
+              composingRef.current = false
+              trackSelection()
+            }}
+            onKeyDown={(event) => {
+              if (composingRef.current) return
+              const mod = event.metaKey || event.ctrlKey
+              if (!mod) return
+              const key = event.key.toLowerCase()
+              if (key === 'z' && !event.shiftKey) {
+                event.preventDefault()
+                void undoNoteEdit(note.id)
+              } else if ((key === 'z' && event.shiftKey) || key === 'y') {
+                event.preventDefault()
+                redoNoteEdit(note.id)
+              }
+            }}
+            // <<< integration:note-capture-editing
           />
         ) : (
           <div
             ref={previewRef}
             className="note-preview"
             onClick={onPreviewClick}
-            dangerouslySetInnerHTML={{ __html: renderNote(note.body || '_还没有内容_') }}
+            dangerouslySetInnerHTML={{ __html: previewHtml }}
           />
         )}
       </div>
 
-      {note.refs.length > 0 ? (
+      {/* >>> integration:note-capture-editing */}
+      {chipRefs.length > 0 ? (
         <div className="note-refs">
           <span className="note-refs-label">来源</span>
-          {note.refs.map((ref) => (
-            <button key={ref.id} type="button" className="ref-chip" onClick={() => void openRef(ref.id)} title={ref.quote}>
-              {ref.label}
-              <span className="ref-chip-quote">{truncate(ref.quote, 24)}</span>
-            </button>
-          ))}
+          {chipRefs.map((ref) => {
+            const view = sourceStatus(ref.id, statusInput)
+            return (
+              <button
+                key={ref.id}
+                type="button"
+                className={`ref-chip is-${view.status}`}
+                onClick={() => void openRef(ref.id)}
+                title={view.title}
+              >
+                {ref.label}
+                <span className="ref-chip-quote">{truncate(ref.quote, 24)}</span>
+              </button>
+            )
+          })}
         </div>
       ) : null}
+      {/* <<< integration:note-capture-editing */}
 
       <div className="note-foot">
         {selection ? (

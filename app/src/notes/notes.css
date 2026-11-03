@@ -1,0 +1,305 @@
+/* Note module UI: capture menu, tabs, switcher, draft panel and feedback.
+   Scoped with .note-* / .capture-* so nothing leaks into the shared shell. */
+
+/* Keep the note toolbar readable in the narrow side pane. */
+.note-toolbar { flex-wrap: wrap; row-gap: 4px; }
+.note-toolbar .seg button,
+.note-toolbar .note-tools button,
+.note-toolbar .btn { white-space: nowrap; }
+.note-editor-pane .note-meta { display: none; }
+.note-editor-pane .note-toolbar { gap: 6px; }
+
+.note-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 8px 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.note-tabs::-webkit-scrollbar { display: none; }
+.note-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 150px;
+  height: 26px;
+  padding: 0 6px 0 9px;
+  border: 1px solid transparent;
+  border-bottom: 0;
+  border-radius: 6px 6px 0 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+.note-tab:hover { background: var(--surface-2); color: var(--ink-2); }
+.note-tab.is-active {
+  background: var(--surface);
+  border-color: var(--line);
+  color: var(--ink);
+}
+.note-tab-title { overflow: hidden; text-overflow: ellipsis; }
+.note-tab-close {
+  width: 15px;
+  height: 15px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--faint);
+  font-size: 10px;
+  line-height: 1;
+}
+.note-tab-close:hover { background: var(--surface-3); color: var(--ink-2); }
+.note-tab-add {
+  height: 24px;
+  min-width: 24px;
+  margin-left: 2px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+}
+.note-tab-add:hover { background: var(--surface-2); color: var(--ink); }
+
+.capture-menu {
+  position: fixed;
+  z-index: 60;
+  width: 300px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-pop);
+  font-size: 12px;
+}
+.capture-head { display: flex; align-items: center; gap: 6px; }
+.capture-head select {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--surface);
+  font-size: 12px;
+}
+.capture-placement { margin: 8px 0 2px; color: var(--muted); font-size: 11.5px; }
+.capture-quote {
+  margin: 4px 0 8px;
+  padding: 6px 8px;
+  border-left: 3px solid var(--evidence);
+  background: var(--surface-2);
+  color: var(--ink-2);
+  font-size: 11.5px;
+  line-height: 1.6;
+  max-height: 84px;
+  overflow: hidden;
+}
+.capture-source-toggle { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+.capture-actions { display: flex; gap: 6px; margin-top: 10px; }
+.capture-feedback {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--line);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  color: var(--ink-2);
+}
+.capture-feedback .link { border: 0; background: none; padding: 0; color: var(--accent); }
+.capture-feedback .link:hover { text-decoration: underline; }
+
+.reader-capture {
+  position: fixed;
+  z-index: 58;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-pop);
+}
+.reader-capture-error { padding: 0 6px; color: var(--danger); font-size: 11px; }
+
+.capture-feedback-bar {
+  position: fixed;
+  left: 18px;
+  bottom: 20px;
+  z-index: 55;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-pop);
+  font-size: 12px;
+}
+.capture-feedback-bar .link { border: 0; background: none; color: var(--accent); padding: 0; }
+
+.note-undo-banner {
+  position: fixed;
+  left: 50%;
+  top: 58px;
+  transform: translateX(-50%);
+  z-index: 56;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--ink);
+  color: var(--surface);
+  box-shadow: var(--shadow-pop);
+  font-size: 12px;
+}
+.note-undo-banner button {
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  padding: 2px 8px;
+}
+.note-undo-banner button:hover { background: rgba(255, 255, 255, 0.12); }
+
+.note-switcher-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: 12vh;
+  background: rgba(47, 44, 40, 0.22);
+}
+.note-switcher {
+  width: min(460px, 92vw);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-pop);
+  overflow: hidden;
+}
+.note-switcher input {
+  width: 100%;
+  height: 38px;
+  padding: 0 12px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+  font-size: 13px;
+  outline: none;
+}
+.note-switcher-list { max-height: 300px; overflow: auto; padding: 4px; }
+.note-switcher-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  text-align: left;
+}
+.note-switcher-item:hover,
+.note-switcher-item.is-active { background: var(--accent-soft); }
+.note-switcher-title { font-size: 12.5px; color: var(--ink); }
+.note-switcher-excerpt { color: var(--faint); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.note-switcher-empty { padding: 14px; color: var(--muted); text-align: center; }
+.note-switcher-foot { padding: 6px 10px; border-top: 1px solid var(--line); color: var(--faint); font-size: 10.5px; }
+
+.note-draft-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 68;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(47, 44, 40, 0.26);
+}
+.note-draft {
+  width: min(560px, 94vw);
+  max-height: 84vh;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-pop);
+}
+.note-draft-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 12px 14px 6px;
+}
+.note-draft-head h2 { margin: 0; font-size: 14px; }
+.note-draft-head .hint { color: var(--faint); font-size: 11px; }
+.note-draft-body { padding: 0 14px; overflow: auto; }
+.note-draft textarea {
+  width: 100%;
+  min-height: 170px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--surface);
+  font-size: 12.5px;
+  line-height: 1.7;
+  resize: vertical;
+}
+.note-draft-row { display: flex; align-items: center; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.note-draft-row label { color: var(--muted); font-size: 11.5px; }
+.note-draft-row select {
+  height: 26px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--surface);
+  font-size: 12px;
+}
+.note-draft-sources { margin-top: 10px; border-top: 1px dashed var(--line); padding-top: 8px; }
+.note-draft-sources p { margin: 0 0 6px; color: var(--muted); font-size: 11.5px; }
+.note-draft-source { display: flex; align-items: center; gap: 7px; padding: 3px 0; font-size: 11.5px; color: var(--ink-2); }
+.note-draft-source input { margin: 0; }
+.note-draft-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px 12px;
+}
+.note-draft-foot .tool-spacer { flex: 1; }
+
+.note-flash {
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: var(--evidence-soft);
+  color: var(--ink-2);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+
+.ref-link.is-missing,
+.ref-link.is-deleted,
+.ref-link.is-orphaned {
+  color: var(--danger);
+  text-decoration: line-through;
+}
+.ref-link.is-relocated { color: var(--accent); font-style: italic; }
+.ref-link.is-legacy { color: var(--accent); }
+.ref-link.is-ok { color: var(--accent); }
+
+.note-source-group { padding: 4px 2px; }
+.note-source-group + .note-source-group { border-top: 1px solid var(--line); }
+.note-source-label { padding: 4px 8px 2px; color: var(--faint); font-size: 10.5px; }
+.note-source-empty { padding: 8px; color: var(--muted); font-size: 11.5px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .capture-menu,
+  .note-switcher,
+  .note-draft { transition: none; }
+}

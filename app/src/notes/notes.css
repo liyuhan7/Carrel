@@ -152,10 +152,10 @@
   gap: 10px;
   padding: 8px 14px;
   border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--ink);
-  color: var(--surface);
-  box-shadow: var(--shadow-pop);
+  border-radius: var(--radius-button);
+  background: #2d332f;
+  color: #f8f7f2;
+  box-shadow: var(--shadow-md);
   font-size: 12px;
 }
 .note-undo-banner button {
@@ -175,7 +175,7 @@
   justify-content: center;
   align-items: flex-start;
   padding-top: 12vh;
-  background: rgba(47, 44, 40, 0.22);
+  background: rgba(45, 51, 47, 0.24);
 }
 .note-switcher {
   width: min(460px, 92vw);
@@ -221,7 +221,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(47, 44, 40, 0.26);
+  background: rgba(45, 51, 47, 0.28);
 }
 .note-draft {
   width: min(560px, 94vw);

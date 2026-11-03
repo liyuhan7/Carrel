@@ -3,6 +3,11 @@
 
 /* ---------- toolbar ---------- */
 
+.reader-pane {
+  container-type: inline-size;
+  container-name: reader;
+}
+
 .reader-toolbar {
   flex: 0 0 auto;
   border-bottom: 1px solid var(--line);
@@ -15,6 +20,22 @@
   gap: 6px;
   padding: 4px 8px;
   flex-wrap: wrap;
+}
+
+.reader-toolbar-main {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.reader-toolbar-side {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  flex: 0 0 auto;
 }
 
 .reader-tool {
@@ -35,6 +56,68 @@
   cursor: default;
 }
 
+.tool-menu { position: relative; display: inline-flex; }
+.tool-menu-trigger { display: inline-flex; align-items: center; gap: 3px; }
+.tool-caret { font-size: 9px; opacity: 0.55; }
+.tool-state-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent-gold); }
+
+.tool-menu-panel {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 80;
+  min-width: 132px;
+  padding: 4px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-md);
+}
+.tool-menu-panel.is-wide { width: 300px; max-width: calc(100vw - 24px); padding: 10px; }
+.tool-menu-panel.is-right { left: auto; right: 0; }
+
+.color-panel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px;
+}
+.color-panel .ann-color { width: 18px; height: 18px; min-width: 18px; }
+.color-trigger { display: inline-flex; align-items: center; gap: 4px; padding: 0 6px; }
+
+.tool-menu-title { padding: 2px 4px 6px; color: var(--faint); font-size: 11px; }
+
+.tool-menu-item {
+  width: 100%;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-2);
+  font-size: 12px;
+  text-align: left;
+}
+.tool-menu-item:hover { background: var(--brand-soft); color: var(--text-primary); }
+.tool-menu-item.is-active { color: var(--brand-primary); font-weight: 600; }
+.tool-menu-check { color: var(--brand-primary); font-size: 11px; }
+
+.tool-menu-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px 8px;
+  color: var(--ink-2);
+  font-size: 12px;
+  cursor: pointer;
+}
+.tool-menu-row input { margin: 0; accent-color: var(--accent); }
+
 .ann-color {
   width: 15px;
   height: 15px;
@@ -51,9 +134,9 @@
 
 .reader-filter-panel {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px 18px;
-  padding: 8px 10px 10px;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 2px 2px;
   border-top: 1px dashed var(--line);
 }
 
@@ -81,6 +164,19 @@
 .filter-check input {
   margin: 0;
   accent-color: var(--accent);
+}
+
+/* Narrow pane: tighten spacing so groups wrap as whole units instead of
+   squeezing labels into two lines. */
+@container reader (max-width: 430px) {
+  .reader-tools { gap: 2px; padding: 4px 8px; }
+  .reader-tools .tool-sep { display: none; }
+  .reader-tools .tool-spacer { display: none; }
+  .reader-tools > .icon-btn { margin-left: auto; }
+  .reader-toolbar-row { gap: 2px; padding: 4px 6px; }
+  .reader-toolbar-main { gap: 2px; }
+  .reader-toolbar-side { gap: 2px; }
+  .reader-tool { padding: 0 6px; }
 }
 
 /* ---------- overlay ---------- */

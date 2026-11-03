@@ -958,7 +958,6 @@ export const useStore = create<Store>((set, get) => {
       })
       persist()
       useNoteUi.getState().showUndo({ noteId: id, title: note.title || '未命名笔记', at: deletedAt })
-      get().notify(`已删除《${note.title || '未命名笔记'}》，可撤销恢复`)
     },
 
     restoreNote: (id) => {

@@ -40,10 +40,12 @@ export function NoteEditor ({ note, variant }: { note: Note; variant: 'pane' | '
 
   const [mode, setMode] = useState<'edit' | 'preview'>('edit')
   const [panel, setPanel] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
   const [instruction, setInstruction] = useState('润色，保持原意')
   const [range, setRange] = useState<{ start: number; end: number; text: string } | null>(null)
   const areaRef = useRef<HTMLTextAreaElement>(null)
   const previewRef = useRef<HTMLDivElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
   // >>> integration:note-capture-editing
   const bodyRef = useRef<HTMLDivElement>(null)
   const titleRef = useRef<HTMLInputElement>(null)
@@ -211,6 +213,22 @@ export function NoteEditor ({ note, variant }: { note: Note; variant: 'pane' | '
   }, [highlight?.nonce])
   // <<< integration:note-capture-editing
 
+  useEffect(() => {
+    if (!menuOpen) return
+    const onDown = (event: globalThis.MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) setMenuOpen(false)
+    }
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMenuOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [menuOpen])
+
   const onPreviewClick = async (event: MouseEvent<HTMLDivElement>) => {
     const link = (event.target as HTMLElement).closest('a[data-ref]')
     if (!link) return
@@ -248,15 +266,33 @@ export function NoteEditor ({ note, variant }: { note: Note; variant: 'pane' | '
           // <<< integration:note-capture-editing
           onChange={(event) => updateNote(note.id, { title: event.target.value })}
         />
-        <button
-          type="button"
-          className="btn btn-ghost btn-small"
-          onClick={() => {
-            if (confirm(`删除笔记「${note.title || '未命名笔记'}」？可在提示中撤销恢复`)) deleteNote(note.id)
-          }}
-        >
-          删除
-        </button>
+        <div className="note-menu" ref={menuRef}>
+          <button
+            type="button"
+            className="icon-btn note-more"
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            aria-label="笔记操作"
+            title="笔记操作"
+            onClick={() => setMenuOpen((value) => !value)}
+          >
+            ⋯
+          </button>
+          {menuOpen ? (
+            <div className="popover popover-right note-menu-panel" role="menu">
+              <button
+                type="button"
+                className="menu-item is-danger"
+                onClick={() => {
+                  setMenuOpen(false)
+                  if (confirm(`删除笔记「${note.title || '未命名笔记'}」？可在提示中撤销恢复`)) deleteNote(note.id)
+                }}
+              >
+                删除笔记
+              </button>
+            </div>
+          ) : null}
+        </div>
       </div>
 
       <div className="note-toolbar">
@@ -284,13 +320,16 @@ export function NoteEditor ({ note, variant }: { note: Note; variant: 'pane' | '
             </button>
           </div>
         ) : null}
-        <button type="button" className="btn btn-ghost btn-small" onClick={openRewrite}>
-          AI 整理
-        </button>
-        {/* >>> integration:note-capture-editing */}
-        <SourceInsertButton label="插入来源" />
         {flash ? <span className="note-flash" role="status">{flash}</span> : null}
-        {/* <<< integration:note-capture-editing */}
+        <span className="tool-spacer" />
+        <div className="note-aux">
+          {/* >>> integration:note-capture-editing */}
+          <SourceInsertButton label="插入来源" align="right" />
+          {/* <<< integration:note-capture-editing */}
+          <button type="button" className="btn btn-ghost btn-small" onClick={openRewrite}>
+            AI 整理
+          </button>
+        </div>
       </div>
 
       {panel || rewrite?.noteId === note.id ? (

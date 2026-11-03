@@ -1,6 +1,9 @@
-// Reader toolbar: active tool, colour, annotation visibility, filters and undo.
+// Reader toolbar: the tools used on almost every page stay visible, the rest
+// live in menus. Colour appears only while an annotation tool is active, and
+// annotation management (visibility + filters) is one entry on the right.
+// The left cluster wraps as a unit so a narrow pane never breaks a button.
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ResolveStatus } from '../../shared/contracts/content'
 import type { AnnotationKind } from '../../shared/contracts/reader'
 import type { AnnotationFilters } from './AnnotationOverlay'
@@ -8,12 +11,24 @@ import { KIND_LABEL } from './AnnotationSidebar'
 
 export type ReaderTool = 'select' | AnnotationKind
 
-const TOOLS: Array<{ tool: ReaderTool; label: string; title: string }> = [
+interface ToolItem {
+  tool: ReaderTool
+  label: string
+  title: string
+}
+
+const PRIMARY: ToolItem[] = [
   { tool: 'select', label: '选择', title: '选择文字或点击标注' },
   { tool: 'highlight', label: '高亮', title: '选中文字后直接高亮' },
+  { tool: 'note', label: '批注', title: '选中文字或点击页面位置添加批注' }
+]
+
+const MARK_TOOLS: ToolItem[] = [
   { tool: 'underline', label: '下划线', title: '选中文字后添加下划线' },
-  { tool: 'strikethrough', label: '删除线', title: '选中文字后添加删除线' },
-  { tool: 'note', label: '批注', title: '选中文字或点击页面位置添加批注' },
+  { tool: 'strikethrough', label: '删除线', title: '选中文字后添加删除线' }
+]
+
+const DRAW_TOOLS: ToolItem[] = [
   { tool: 'rect', label: '矩形', title: '在页面上拖出矩形' },
   { tool: 'ellipse', label: '椭圆', title: '在页面上拖出椭圆' },
   { tool: 'arrow', label: '箭头', title: '从起点拖到终点' },
@@ -56,6 +71,8 @@ interface ToolbarProps {
   onFilters: (filters: AnnotationFilters) => void
 }
 
+type OpenMenu = 'mark' | 'draw' | 'color' | 'manage' | null
+
 export function ReaderToolbar ({
   tool,
   onTool,
@@ -69,123 +86,240 @@ export function ReaderToolbar ({
   filters,
   onFilters
 }: ToolbarProps) {
-  const [filtersOpen, setFiltersOpen] = useState(false)
+  const [menu, setMenu] = useState<OpenMenu>(null)
+  const rootRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!menu) return
+    const onDown = (event: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(event.target as Node)) setMenu(null)
+    }
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMenu(null)
+    }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [menu])
+
+  const choose = (next: ReaderTool) => {
+    onTool(next)
+    setMenu(null)
+  }
+
+  const activeMark = MARK_TOOLS.find((item) => item.tool === tool)
+  const activeDraw = DRAW_TOOLS.find((item) => item.tool === tool)
+  const filtersActive = filters.kinds.length > 0 || filters.colors.length > 0 || filters.statuses.length > 0
 
   return (
-    <div className="reader-toolbar">
+    <div className="reader-toolbar" ref={rootRef}>
       <div className="reader-toolbar-row">
-        <div className="tool-group" role="group" aria-label="标注工具">
-          {TOOLS.map((item) => (
+        <div className="reader-toolbar-main">
+          <div className="tool-group" role="group" aria-label="标注工具">
+            {PRIMARY.map((item) => (
+              <button
+                key={item.tool}
+                type="button"
+                className={`tool reader-tool${tool === item.tool ? ' is-active' : ''}`}
+                aria-pressed={tool === item.tool}
+                title={item.title}
+                onClick={() => choose(item.tool)}
+              >
+                {item.label}
+              </button>
+            ))}
+
+            <div className="tool-menu">
+              <button
+                type="button"
+                className={`tool reader-tool tool-menu-trigger${activeMark ? ' is-active' : ''}`}
+                aria-haspopup="menu"
+                aria-expanded={menu === 'mark'}
+                title="下划线、删除线"
+                onClick={() => setMenu(menu === 'mark' ? null : 'mark')}
+              >
+                {activeMark ? activeMark.label : '标记'}
+                <span className="tool-caret" aria-hidden="true">▾</span>
+              </button>
+              {menu === 'mark' ? (
+                <div className="tool-menu-panel" role="menu" aria-label="文字标记">
+                  {MARK_TOOLS.map((item) => (
+                    <button
+                      key={item.tool}
+                      type="button"
+                      role="menuitemradio"
+                      aria-checked={tool === item.tool}
+                      className={`tool-menu-item${tool === item.tool ? ' is-active' : ''}`}
+                      onClick={() => choose(item.tool)}
+                    >
+                      {item.label}
+                      {tool === item.tool ? <span className="tool-menu-check">✓</span> : null}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+
+            <div className="tool-menu">
+              <button
+                type="button"
+                className={`tool reader-tool tool-menu-trigger${activeDraw ? ' is-active' : ''}`}
+                aria-haspopup="menu"
+                aria-expanded={menu === 'draw'}
+                title="矩形、椭圆、箭头、手写"
+                onClick={() => setMenu(menu === 'draw' ? null : 'draw')}
+              >
+                {activeDraw ? activeDraw.label : '绘图'}
+                <span className="tool-caret" aria-hidden="true">▾</span>
+              </button>
+              {menu === 'draw' ? (
+                <div className="tool-menu-panel" role="menu" aria-label="绘图">
+                  {DRAW_TOOLS.map((item) => (
+                    <button
+                      key={item.tool}
+                      type="button"
+                      role="menuitemradio"
+                      aria-checked={tool === item.tool}
+                      className={`tool-menu-item${tool === item.tool ? ' is-active' : ''}`}
+                      onClick={() => choose(item.tool)}
+                    >
+                      {item.label}
+                      {tool === item.tool ? <span className="tool-menu-check">✓</span> : null}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          </div>
+
+          {tool !== 'select' ? (
+            <div className="tool-menu">
+              <button
+                type="button"
+                className={`tool reader-tool color-trigger${menu === 'color' ? ' is-active' : ''}`}
+                aria-haspopup="menu"
+                aria-expanded={menu === 'color'}
+                title="标注颜色"
+                onClick={() => setMenu(menu === 'color' ? null : 'color')}
+              >
+                <span className="ann-color" style={{ background: color }} />
+                <span className="tool-caret" aria-hidden="true">▾</span>
+              </button>
+              {menu === 'color' ? (
+                <div className="tool-menu-panel color-panel is-right" role="menu" aria-label="标注颜色">
+                  {PALETTE.map((swatch) => (
+                    <button
+                      key={swatch}
+                      type="button"
+                      role="menuitemradio"
+                      aria-checked={color === swatch}
+                      className={`ann-color${color === swatch ? ' is-active' : ''}`}
+                      style={{ background: swatch }}
+                      aria-label={`颜色 ${swatch}`}
+                      onClick={() => {
+                        onColor(swatch)
+                        setMenu(null)
+                      }}
+                    />
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+
+        <div className="reader-toolbar-side">
+          <button
+            type="button"
+            className="tool reader-tool"
+            disabled={!canUndo}
+            title={undoLabel ? `撤销：${undoLabel}` : '没有可撤销的标注操作'}
+            onClick={onUndo}
+          >
+            ↶ 撤销
+          </button>
+
+          <div className="tool-menu">
             <button
-              key={item.tool}
               type="button"
-              className={`tool reader-tool${tool === item.tool ? ' is-active' : ''}`}
-              aria-pressed={tool === item.tool}
-              title={item.title}
-              onClick={() => onTool(item.tool)}
+              className={`tool reader-tool tool-menu-trigger${menu === 'manage' ? ' is-active' : ''}`}
+              aria-haspopup="menu"
+              aria-expanded={menu === 'manage'}
+              title="显示、隐藏和筛选标注"
+              onClick={() => setMenu(menu === 'manage' ? null : 'manage')}
             >
-              {item.label}
+              标注管理
+              {!showAnnotations || filtersActive ? <span className="tool-state-dot" aria-hidden="true" /> : null}
+              <span className="tool-caret" aria-hidden="true">▾</span>
             </button>
-          ))}
+            {menu === 'manage' ? (
+              <div className="tool-menu-panel is-wide is-right" role="menu" aria-label="标注管理">
+                <div className="tool-menu-title">标注管理</div>
+                <label className="tool-menu-row">
+                  <input
+                    type="checkbox"
+                    checked={showAnnotations}
+                    onChange={(event) => onToggleAnnotations(event.target.checked)}
+                  />
+                  显示所有标注
+                </label>
+
+                <div className="reader-filter-panel">
+                  <div className="filter-group">
+                    <span className="filter-label">类型</span>
+                    {KINDS.map((kind) => (
+                      <label key={kind} className="filter-check">
+                        <input
+                          type="checkbox"
+                          checked={filters.kinds.length === 0 || filters.kinds.includes(kind)}
+                          onChange={() => onFilters({ ...filters, kinds: toggle(filters.kinds, kind, KINDS) })}
+                        />
+                        {KIND_LABEL[kind]}
+                      </label>
+                    ))}
+                  </div>
+                  <div className="filter-group">
+                    <span className="filter-label">状态</span>
+                    {STATUS_OPTIONS.map((status) => (
+                      <label key={status} className="filter-check">
+                        <input
+                          type="checkbox"
+                          checked={filters.statuses.length === 0 || filters.statuses.includes(status)}
+                          onChange={() => onFilters({ ...filters, statuses: toggle(filters.statuses, status, STATUS_OPTIONS) })}
+                        />
+                        {STATUS_LABEL[status]}
+                      </label>
+                    ))}
+                  </div>
+                  <div className="filter-group">
+                    <span className="filter-label">颜色</span>
+                    {PALETTE.map((swatch) => (
+                      <label key={swatch} className="filter-check">
+                        <input
+                          type="checkbox"
+                          checked={filters.colors.length === 0 || filters.colors.includes(swatch)}
+                          onChange={() => onFilters({ ...filters, colors: toggle(filters.colors, swatch, PALETTE) })}
+                        />
+                        <span className="ann-color" style={{ background: swatch }} />
+                      </label>
+                    ))}
+                    <button
+                      type="button"
+                      className="link"
+                      onClick={() => onFilters({ kinds: [], colors: [], statuses: [] })}
+                    >
+                      清除筛选
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+          </div>
         </div>
-
-        <span className="tool-sep" />
-
-        <div className="tool-group" role="group" aria-label="标注颜色">
-          {PALETTE.map((swatch) => (
-            <button
-              key={swatch}
-              type="button"
-              className={`ann-color${color === swatch ? ' is-active' : ''}`}
-              style={{ background: swatch }}
-              aria-label={`颜色 ${swatch}`}
-              aria-pressed={color === swatch}
-              onClick={() => onColor(swatch)}
-            />
-          ))}
-        </div>
-
-        <span className="tool-spacer" />
-
-        <button
-          type="button"
-          className={`tool reader-tool${showAnnotations ? ' is-active' : ''}`}
-          aria-pressed={showAnnotations}
-          title={showAnnotations ? '隐藏所有标注' : '显示所有标注'}
-          onClick={() => onToggleAnnotations(!showAnnotations)}
-        >
-          {showAnnotations ? '隐藏标注' : '显示标注'}
-        </button>
-        <button
-          type="button"
-          className={`tool reader-tool${filtersOpen ? ' is-active' : ''}`}
-          aria-expanded={filtersOpen}
-          title="按类型、颜色或定位状态筛选"
-          onClick={() => setFiltersOpen(!filtersOpen)}
-        >
-          筛选
-        </button>
-        <button
-          type="button"
-          className="tool reader-tool"
-          disabled={!canUndo}
-          title={undoLabel ? `撤销：${undoLabel}` : '没有可撤销的标注操作'}
-          onClick={onUndo}
-        >
-          ↶ 撤销
-        </button>
       </div>
-
-      {filtersOpen ? (
-        <div className="reader-filter-panel">
-          <div className="filter-group">
-            <span className="filter-label">类型</span>
-            {KINDS.map((kind) => (
-              <label key={kind} className="filter-check">
-                <input
-                  type="checkbox"
-                  checked={filters.kinds.length === 0 || filters.kinds.includes(kind)}
-                  onChange={() => onFilters({ ...filters, kinds: toggle(filters.kinds, kind, KINDS) })}
-                />
-                {KIND_LABEL[kind]}
-              </label>
-            ))}
-          </div>
-          <div className="filter-group">
-            <span className="filter-label">状态</span>
-            {STATUS_OPTIONS.map((status) => (
-              <label key={status} className="filter-check">
-                <input
-                  type="checkbox"
-                  checked={filters.statuses.length === 0 || filters.statuses.includes(status)}
-                  onChange={() => onFilters({ ...filters, statuses: toggle(filters.statuses, status, STATUS_OPTIONS) })}
-                />
-                {STATUS_LABEL[status]}
-              </label>
-            ))}
-          </div>
-          <div className="filter-group">
-            <span className="filter-label">颜色</span>
-            {PALETTE.map((swatch) => (
-              <label key={swatch} className="filter-check">
-                <input
-                  type="checkbox"
-                  checked={filters.colors.length === 0 || filters.colors.includes(swatch)}
-                  onChange={() => onFilters({ ...filters, colors: toggle(filters.colors, swatch, PALETTE) })}
-                />
-                <span className="ann-color" style={{ background: swatch }} />
-              </label>
-            ))}
-            <button
-              type="button"
-              className="link"
-              onClick={() => onFilters({ kinds: [], colors: [], statuses: [] })}
-            >
-              清除筛选
-            </button>
-          </div>
-        </div>
-      ) : null}
     </div>
   )
 }

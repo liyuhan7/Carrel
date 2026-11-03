@@ -75,6 +75,7 @@ interface NoteUi {
 }
 
 let nonce = 0
+let undoTimer: ReturnType<typeof setTimeout> | undefined
 
 export const useNoteUi = create<NoteUi>((set) => ({
   focus: null,
@@ -91,7 +92,19 @@ export const useNoteUi = create<NoteUi>((set) => ({
     requestCaret: (noteId, offset) => set({ caret: { noteId, offset, nonce: ++nonce } }),
   flashInsert: (noteId, blockId, from, to) => set({ highlight: { noteId, blockId, from, to, nonce: ++nonce } }),
   setFeedback: (feedback) => set({ feedback }),
-  showUndo: (undoBanner) => set({ undoBanner }),
+  showUndo: (undoBanner) => {
+    clearTimeout(undoTimer)
+    set({ undoBanner })
+    if (!undoBanner) return
+    // Own the timeout here rather than in the banner component: the banner can
+    // remount when the active note changes, which used to restart its timer.
+    undoTimer = setTimeout(() => {
+      const current = useNoteUi.getState().undoBanner
+      if (current && current.at === undoBanner.at && current.noteId === undoBanner.noteId) {
+        set({ undoBanner: null })
+      }
+    }, 5000)
+  },
   openSwitcher: () => set({ switcherOpen: true }),
   closeSwitcher: () => set({ switcherOpen: false }),
   openCapture: (captureSource) => set({ captureSource }),

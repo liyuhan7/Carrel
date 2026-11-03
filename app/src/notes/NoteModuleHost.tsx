@@ -1,7 +1,7 @@
 // Note module host: tabs, quick switcher, keyboard shortcuts and capture feedback.
 // Mounted from the note pane and the notes page; owns no persisted state.
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useStore } from '../store'
 import { truncate } from '../lib/format'
 import { CaptureMenu } from './CaptureMenu'
@@ -56,7 +56,7 @@ function NoteShortcuts () {
   return null
 }
 
-export function NoteTabs () {
+export function NoteTabs ({ trailing }: { trailing?: ReactNode }) {
   const notes = useStore((s) => s.notes)
   const activeNoteId = useStore((s) => s.workspace.activeNoteId)
   const tabIds = useStore((s) => s.workspace.noteTabs ?? [])
@@ -68,40 +68,43 @@ export function NoteTabs () {
     .filter((note): note is NonNullable<typeof note> => Boolean(note))
 
   return (
-    <div className="note-tabs" role="tablist" aria-label="最近使用的笔记">
-      {tabs.map((note) => {
-        const active = note.id === activeNoteId
-        return (
-          <div
-            key={note.id}
-            className={`note-tab${active ? ' is-active' : ''}`}
-            role="tab"
-            aria-selected={active}
-            tabIndex={0}
-            title={note.title || '未命名笔记'}
-            onClick={() => selectNote(note.id)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') selectNote(note.id)
-            }}
-          >
-            <span className="note-tab-title">{note.title || '未命名笔记'}</span>
-            <button
-              type="button"
-              className="note-tab-close"
-              aria-label={`从页签移除 ${note.title || '未命名笔记'}`}
-              onClick={(event) => {
-                event.stopPropagation()
-                closeNoteTab(note.id)
+    <div className="note-tabs-bar">
+      <div className="note-tabs" role="tablist" aria-label="最近使用的笔记">
+        {tabs.map((note) => {
+          const active = note.id === activeNoteId
+          return (
+            <div
+              key={note.id}
+              className={`note-tab${active ? ' is-active' : ''}`}
+              role="tab"
+              aria-selected={active}
+              tabIndex={0}
+              title={note.title || '未命名笔记'}
+              onClick={() => selectNote(note.id)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') selectNote(note.id)
               }}
             >
-              ✕
-            </button>
-          </div>
-        )
-      })}
-      <button type="button" className="note-tab-add" title="新建笔记（Ctrl+N）" onClick={() => newNoteAndFocusTitle()}>
-        ＋
-      </button>
+              <span className="note-tab-title">{note.title || '未命名笔记'}</span>
+              <button
+                type="button"
+                className="note-tab-close"
+                aria-label={`从页签移除 ${note.title || '未命名笔记'}`}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  closeNoteTab(note.id)
+                }}
+              >
+                ✕
+              </button>
+            </div>
+          )
+        })}
+        <button type="button" className="note-tab-add" title="新建笔记（Ctrl+N）" onClick={() => newNoteAndFocusTitle()}>
+          ＋
+        </button>
+      </div>
+      {trailing ? <div className="note-tabs-actions">{trailing}</div> : null}
     </div>
   )
 }
@@ -216,12 +219,6 @@ function NoteUndoBanner () {
   const banner = useNoteUi((s) => s.undoBanner)
   const showUndo = useNoteUi((s) => s.showUndo)
   const restoreNote = useStore((s) => s.restoreNote)
-
-  useEffect(() => {
-    if (!banner) return
-    const timer = setTimeout(() => showUndo(null), 9000)
-    return () => clearTimeout(timer)
-  }, [banner, showUndo])
 
   if (!banner) return null
 

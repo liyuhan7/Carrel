@@ -7,7 +7,7 @@ import { truncate } from '../lib/format'
 import { useNoteUi, type CaptureSourceInput } from './ui'
 import './notes.css'
 
-export function SourceInsertButton ({ label = '插入来源' }: { label?: string }) {
+export function SourceInsertButton ({ label = '插入来源', align = 'left' }: { label?: string; align?: 'left' | 'right' }) {
   const [open, setOpen] = useState(false)
   const wrapRef = useRef<HTMLDivElement>(null)
   const selection = useStore((s) => s.selection)
@@ -69,7 +69,7 @@ export function SourceInsertButton ({ label = '插入来源' }: { label?: string
         {label}
       </button>
       {open ? (
-        <div className="popover popover-left" style={{ width: 290 }} role="menu">
+        <div className={`popover popover-${align}`} style={{ width: 290 }} role="menu">
           <div className="note-source-group">
             <div className="note-source-label">阅读区</div>
             {selection && selectionFile ? (

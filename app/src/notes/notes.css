@@ -9,15 +9,37 @@
 .note-editor-pane .note-meta { display: none; }
 .note-editor-pane .note-toolbar { gap: 6px; }
 
+.note-aux {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  padding-left: 8px;
+  border-left: 1px solid var(--border-default);
+}
+.note-editor-pane .note-aux { gap: 2px; padding-left: 6px; }
+.note-aux .btn { flex: 0 0 auto; }
+
+.note-tabs-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px 0;
+  min-width: 0;
+}
 .note-tabs {
+  flex: 1;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 2px;
-  padding: 6px 8px 0;
   overflow-x: auto;
   scrollbar-width: none;
 }
 .note-tabs::-webkit-scrollbar { display: none; }
+.note-tabs-actions { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; }
+.note-tabs-actions .icon-btn { width: 26px; height: 26px; }
+.note-pane .note-tabs-bar { border-bottom: 1px solid var(--border-default); }
 .note-tab {
   display: inline-flex;
   align-items: center;

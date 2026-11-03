@@ -25,6 +25,15 @@ export function cachedPdf (fileId: string): PdfDoc | undefined {
   return docs.get(fileId)
 }
 
+// >>> integration:course-reading-annotation
+/** Drop a cached document so an externally changed file is re-read from disk. */
+export function dropPdf (fileId: string): void {
+  const doc = docs.get(fileId)
+  docs.delete(fileId)
+  if (doc) void doc.destroy().catch(() => undefined)
+}
+// <<< integration:course-reading-annotation
+
 export async function extractPageTexts (doc: PdfDoc): Promise<string[]> {
   const pages: string[] = []
   for (let n = 1; n <= doc.numPages; n++) {

@@ -20,7 +20,7 @@ import type { ReadingStatePatch } from './reader/readingState'
 // <<< integration:course-reading-annotation
 import {
   CUSTOM_PRESET, CUSTOM_PRESET_ID, DEFAULT_ACTIVE_MODEL, DEFAULT_CONNECTIONS,
-  activeRoute, adoptSaved, connectionFromPreset, mergeDiscovered, presetOf, routeOf, supportsImage
+  activeRoute, adoptSaved, authReady, connectionFromPreset, mergeDiscovered, presetOf, routeOf, supportsImage
 } from './lib/providers'
 import { extractPageTexts, dropPdf, loadPdf, renderPageImage, type PageImage } from './lib/pdf'
 import { parseAnswer } from './lib/verify'
@@ -160,6 +160,7 @@ interface Store extends PersistedState {
   signOut: (id: string) => Promise<void>
   detectSources: (sources: CredentialSource[]) => Promise<Record<string, SourceDetection>>
   importSource: (id: string, source: CredentialSource) => Promise<{ ok: boolean; message: string }>
+  refreshSubscription: (id: string) => Promise<void>
   copilotBegin: () => Promise<DeviceCode>
   copilotPoll: (id: string, deviceCode: string) => Promise<{ status: 'pending' | 'ok' | 'error'; message?: string }>
   refreshModels: (id: string) => Promise<void>
@@ -1317,6 +1318,12 @@ export const useStore = create<Store>((set, get) => {
       return result
     },
 
+    refreshSubscription: async (id) => {
+      const result = await window.cs.subscriptionRefresh(id)
+      await get().refreshAuth()
+      get().notify(result.message, result.ok ? 'info' : 'error')
+    },
+
     copilotBegin: () => window.cs.copilotBegin(),
 
     copilotPoll: async (id, deviceCode) => {
@@ -1422,8 +1429,13 @@ export const useStore = create<Store>((set, get) => {
         return
       }
       const { connection, model } = active
-      if (connection.protocol !== 'demo' && !connection.hasKey) {
-        state.notify('请先在模型服务中填写该服务的 API Key', 'error')
+      if (connection.protocol !== 'demo' && !authReady(connection)) {
+        state.notify(
+          connection.authMethod === 'api-key'
+            ? '请先在模型服务中填写该服务的 API Key'
+            : '请先在模型服务中完成该服务的授权',
+          'error'
+        )
         return
       }
       const page = state.workspace.pages[file.id] ?? 1

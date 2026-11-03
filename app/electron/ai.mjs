@@ -2,18 +2,35 @@
 // streaming, message parts and usage; this module only maps a CourseSpace route
 // (protocol + base URL + credential) onto a provider instance and fixes the
 // auth headers subscription channels need.
+import { randomUUID } from 'node:crypto'
 import { streamText } from 'ai'
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
 import { createOpenAI } from '@ai-sdk/openai'
 import { createAnthropic } from '@ai-sdk/anthropic'
 import { createGoogleGenerativeAI } from '@ai-sdk/google'
 
+/** The ChatGPT subscription backend, not the public OpenAI API. */
+const CHATGPT_CODEX = /chatgpt\.com\/backend-api\/codex/
+/** Codex CLI version the backend expects in `client_version` and the user agent. */
+const CODEX_VERSION = '0.164.0'
+/** OpenCode's plan gateway attributes requests to a project/session. */
+const OPENCODE = /opencode\.ai/
+
 function apiBase (baseUrl, protocol) {
   const base = (baseUrl || '').replace(/\/$/, '')
   if (protocol === 'google-generate-content') return /\/v\d/.test(base) ? base : `${base}/v1beta`
   if (protocol === 'anthropic-messages') return /\/v1$/.test(base) ? base : `${base}/v1`
-  if (protocol === 'openai-responses') return /chatgpt\.com/.test(base) || /\/v1$/.test(base) ? base : `${base}/v1`
+  if (protocol === 'openai-responses') return CHATGPT_CODEX.test(base) || /\/v1$/.test(base) ? base : `${base}/v1`
   return base
+}
+
+function openCodeHeaders () {
+  const id = () => randomUUID().replace(/-/g, '')
+  return {
+    'x-opencode-project': 'global',
+    'x-opencode-request': `msg_${id()}`,
+    'x-opencode-session': `ses_${id()}`
+  }
 }
 
 // Subscription tokens are not the header the SDK sends by default; rewrite them.
@@ -26,6 +43,9 @@ function authFetch (route, auth) {
     }
     for (const [key, value] of Object.entries(auth.headers || {})) {
       if (value) headers.set(key, value)
+    }
+    if (OPENCODE.test(route.baseUrl || '')) {
+      for (const [key, value] of Object.entries(openCodeHeaders())) headers.set(key, value)
     }
     return fetch(input, { ...init, headers })
   }
@@ -56,16 +76,36 @@ function toMessages (messages) {
   }))
 }
 
+/** API errors carry the response body; surface it so a 400 is actionable. */
+function withBody (err) {
+  const body = err?.responseBody ?? err?.cause?.responseBody
+  if (!body) return err
+  return Object.assign(new Error(`${err.message || '请求失败'}：${String(body).slice(0, 300)}`), {
+    statusCode: err.statusCode
+  })
+}
+
 export async function streamChat ({ route, auth, system, messages, signal, onDelta }) {
+  // The ChatGPT Codex backend rejects stored responses and takes the system
+  // prompt as `instructions` instead of a developer message.
+  const codex = CHATGPT_CODEX.test(route.baseUrl || '')
+  const providerOptions = codex
+    ? { openai: { store: false, ...(system ? { instructions: system } : {}) } }
+    : undefined
   const result = streamText({
     model: createModel(route, auth),
-    system,
+    ...(codex ? {} : { system }),
     messages: toMessages(messages),
+    providerOptions,
     abortSignal: signal,
     maxRetries: 0
   })
-  for await (const delta of result.textStream) {
-    if (delta) onDelta(delta)
+  try {
+    for await (const delta of result.textStream) {
+      if (delta) onDelta(delta)
+    }
+  } catch (err) {
+    throw withBody(err)
   }
   const usage = await result.usage
   return { inputTokens: usage?.inputTokens, outputTokens: usage?.outputTokens }
@@ -74,6 +114,7 @@ export async function streamChat ({ route, auth, system, messages, signal, onDel
 function authHeaders (route, auth) {
   const headers = { ...(auth.headers || {}) }
   if (route.projectId) headers['x-goog-user-project'] = route.projectId
+  if (OPENCODE.test(route.baseUrl || '')) Object.assign(headers, openCodeHeaders())
   if (route.protocol === 'google-generate-content' && route.authMethod === 'api-key') return headers
   if (route.authMethod === 'api-key' && route.protocol === 'anthropic-messages') {
     headers['x-api-key'] = auth.credential
@@ -87,6 +128,7 @@ function authHeaders (route, auth) {
 function modelsUrl (route, auth) {
   const base = apiBase(route.baseUrl, route.protocol)
   const url = new URL(`${base}/models`)
+  if (CHATGPT_CODEX.test(route.baseUrl || '')) url.searchParams.set('client_version', CODEX_VERSION)
   if (route.protocol === 'google-generate-content' && route.authMethod === 'api-key') {
     url.searchParams.set('key', auth.credential)
     url.searchParams.set('pageSize', '200')
@@ -97,13 +139,22 @@ function modelsUrl (route, auth) {
 
 async function fetchModels (route, auth) {
   const response = await fetch(modelsUrl(route, auth), { headers: authHeaders(route, auth) })
-  if (!response.ok) throw new Error(statusMessage(response.status))
+  if (!response.ok) {
+    const body = await response.text().catch(() => '')
+    throw new Error(`${statusMessage(response.status)}${body ? `：${body.slice(0, 200)}` : ''}`)
+  }
   const data = await response.json()
   if (route.protocol === 'google-generate-content') {
     return (data.models || []).map((item) => ({
       id: String(item.name || '').replace(/^models\//, ''),
       name: item.displayName
     })).filter((item) => item.id)
+  }
+  // The ChatGPT Codex backend lists `{ models: [{ slug, displayName }] }`.
+  if (Array.isArray(data.models)) {
+    return data.models
+      .map((item) => ({ id: String(item.slug || item.id || ''), name: item.displayName || item.name }))
+      .filter((item) => item.id)
   }
   return (data.data || []).map((item) => ({ id: item.id, name: item.name || item.display_name }))
     .filter((item) => item.id)

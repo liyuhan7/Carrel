@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
+import { Fragment, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import { useStore } from '../store'
 import type { ChatMessage, ContextScope } from '../types'
 import { activeRoute, authReady, modelOptions, supportsImage } from '../lib/providers'
@@ -46,7 +46,8 @@ export function AiPane ({ collapsed, onExpand, onCollapse }: {
   const activeFile = files.find((file) => file.id === workspace.activeTab)
   const page = activeFile ? workspace.pages[activeFile.id] ?? 1 : 1
   const active = activeRoute(connections, activeModel)
-  const options = modelOptions(connections)
+  // Only configured services belong in the picker; the rest are set up from 设置 → 模型服务.
+  const options = modelOptions(connections.filter((connection) => authReady(connection)))
   const scope = workspace.contextScope
   const last = messages[messages.length - 1]
 
@@ -90,25 +91,28 @@ export function AiPane ({ collapsed, onExpand, onCollapse }: {
             </span>
           )}
         >
-          {options.map(({ connection, model }) => (
-            <button
-              key={`${connection.id}/${model.modelId}`}
-              type="button"
-              className={`menu-item${connection.id === active?.connection.id && model.modelId === active.model.modelId ? ' is-active' : ''}`}
-              onClick={() => {
-                if (!authReady(connection)) {
-                  openSettings(connection.id)
-                  return
-                }
-                setActiveModel(connection.id, model.modelId)
-              }}
-            >
-              <span className="menu-name">{model.displayName}</span>
-              <span className="menu-meta">
-                {authReady(connection) ? connection.name : `${connection.name} · 未配置`}
-              </span>
-            </button>
-          ))}
+          {options.map(({ connection, model }, index) => {
+            const first = options[index - 1]?.connection.id !== connection.id
+            return (
+              <Fragment key={`${connection.id}/${model.modelId}`}>
+                {first ? <p className="menu-group">{connection.name}</p> : null}
+                <button
+                  type="button"
+                  className={`menu-item${connection.id === active?.connection.id && model.modelId === active.model.modelId ? ' is-active' : ''}`}
+                  onClick={() => {
+                    if (!authReady(connection)) {
+                      openSettings(connection.id)
+                      return
+                    }
+                    setActiveModel(connection.id, model.modelId)
+                  }}
+                >
+                  <span className="menu-name">{model.displayName}</span>
+                  <span className="menu-meta">{authReady(connection) ? '' : '未配置'}</span>
+                </button>
+              </Fragment>
+            )
+          })}
           <div className="menu-sep" />
           <button type="button" className="menu-item" onClick={() => openSettings()}>
             管理模型服务…

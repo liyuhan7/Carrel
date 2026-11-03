@@ -1074,6 +1074,8 @@ ul { margin: 0; padding: 0; list-style: none; }
 .menu-meta { color: var(--faint); font-size: 11px; flex: 0 0 auto; max-width: 52%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .menu-check { color: var(--accent); font-size: 11px; }
 .menu-sep { height: 1px; margin: 4px 2px; background: var(--line); }
+.menu-group { margin: 8px 0 2px; padding: 0 10px; color: var(--muted); font-size: 11px; letter-spacing: 0.04em; }
+.menu-group:first-child { margin-top: 0; }
 
 /* ---------- modal ---------- */
 
@@ -1105,11 +1107,15 @@ ul { margin: 0; padding: 0; list-style: none; }
 .hint { color: var(--muted); font-size: 12px; line-height: 1.65; }
 
 .settings-body { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 22px; }
-.provider-list { display: flex; flex-direction: column; gap: 2px; }
+.provider-list { display: flex; flex-direction: column; gap: 2px; max-height: min(62vh, 520px); overflow-y: auto; padding-right: 4px; }
+.provider-list > div { min-width: 0; }
+.provider-group { margin: 10px 0 4px; padding: 0 11px; color: var(--muted); font-size: 11px; letter-spacing: 0.04em; }
+.provider-group:first-child { margin-top: 0; }
 .provider-item {
   display: flex;
   align-items: center;
   gap: 8px;
+  width: 100%;
   height: 36px;
   padding: 0 11px;
   border: 0;

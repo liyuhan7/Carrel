@@ -32,6 +32,7 @@ export const DEMO_PRESET: ProviderPreset = {
   name: '演示模式',
   protocol: 'demo',
   baseUrl: '',
+  group: '本地',
   auth: ['none'],
   modelList: 'registry',
   models: [{ id: 'demo', name: '本地演示' }]
@@ -52,8 +53,11 @@ export const CUSTOM_PRESET: ProviderPreset = {
   models: []
 }
 
+/** How many catalog models a new connection enables; the rest stay one toggle away. */
+const DEFAULT_ENABLED = 8
+
 export function connectionFromPreset (preset: ProviderPreset): ProviderConnection {
-  const modelIds = preset.models.map((model) => model.id)
+  const modelIds = preset.models.slice(0, DEFAULT_ENABLED).map((model) => model.id)
   return {
     id: preset.id,
     presetId: preset.id,
@@ -82,6 +86,7 @@ export function describeModel (connection: ProviderConnection, modelId: string):
     modelId,
     apiModelId: preset?.apiModelId ?? cached?.apiModelId,
     displayName: preset?.name ?? cached?.displayName ?? modelId,
+    protocol: preset?.protocol ?? cached?.protocol,
     contextWindow: preset?.contextWindow ?? cached?.contextWindow,
     input: preset?.input ?? cached?.input ?? TEXT,
     capabilities: preset?.capabilities ?? cached?.capabilities ?? [],
@@ -116,6 +121,7 @@ export function mergeDiscovered (connection: ProviderConnection, remote: RemoteM
       modelId: item.id,
       apiModelId: preset?.apiModelId ?? item.id,
       displayName: preset?.name ?? item.name ?? item.id,
+      protocol: preset?.protocol,
       contextWindow: preset?.contextWindow,
       input: preset?.input ?? TEXT,
       capabilities: preset?.capabilities ?? [],
@@ -153,7 +159,7 @@ export function routeOf (connection: ProviderConnection, model: ModelDescriptor)
   return {
     connectionId: connection.id,
     modelId: model.apiModelId ?? model.modelId,
-    protocol: connection.protocol,
+    protocol: model.protocol ?? connection.protocol,
     baseUrl: connection.baseUrl,
     authMethod: connection.authMethod,
     projectId: connection.oauthProjectId

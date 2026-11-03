@@ -1,8 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  DEFAULT_ACTIVE_MODEL, PRESETS, activeRoute, adoptSaved, authReady, describeModel,
-  enabledModels, mergeDiscovered, modelOptions, routeOf
+  DEFAULT_ACTIVE_MODEL, PRESETS, activeRoute, adoptSaved, authReady, connectionFromPreset,
+  describeModel, enabledModels, mergeDiscovered, modelOptions, routeOf
 } from '../src/lib/providers.ts'
 
 const presetWithModels = PRESETS.find((preset) => preset.protocol !== 'demo' && preset.models.length)
@@ -113,4 +113,46 @@ test('a fresh install starts on the demo preset', () => {
   const { connections, activeModel } = adoptSaved(null)
   assert.equal(connections.length, PRESETS.length)
   assert.deepEqual(activeModel, DEFAULT_ACTIVE_MODEL)
+})
+
+test('every preset is addressable and carries models and a section', () => {
+  const ids = PRESETS.map((preset) => preset.id)
+  assert.equal(new Set(ids).size, ids.length, 'preset ids are unique')
+  for (const preset of PRESETS) {
+    assert.ok(preset.group, `${preset.id} has a sidebar section`)
+    const modelIds = preset.models.map((model) => model.id)
+    assert.equal(new Set(modelIds).size, modelIds.length, `${preset.id} model ids are unique`)
+    // Providers that list models over the network may start empty; the rest ship a catalog.
+    if (preset.modelList !== 'api') assert.ok(preset.models.length > 0, `${preset.id} ships models`)
+  }
+})
+
+test('the Grok subscription reuses the Grok Build CLI credential file', () => {
+  const preset = PRESETS.find((item) => item.id === 'grok-cli')
+  assert.deepEqual(preset.auth, ['external-cli'])
+  assert.deepEqual(preset.sources, ['grok'])
+  assert.equal(preset.protocol, 'openai-responses')
+  assert.match(preset.baseUrl, /grok\.com/)
+})
+
+test('vendors the Cherry registry lacks come from the GCMP catalog', () => {
+  for (const id of ['antling', 'tencent-token', 'tencent-tokenhub', 'xfyun-coding', 'clinepass', 'commandcode', 'hyper']) {
+    const preset = PRESETS.find((item) => item.id === id)
+    assert.ok(preset, `${id} is offered`)
+    assert.ok(preset.models.length > 0, `${id} ships models`)
+  }
+  const tencentPlan = PRESETS.find((item) => item.id === 'tencent-token')
+  assert.equal(tencentPlan.baseUrl, 'https://api.lkeap.cloud.tencent.com/plan/anthropic')
+  assert.equal(tencentPlan.protocol, 'anthropic-messages')
+  assert.ok(tencentPlan.models.some((model) => model.apiModelId), 'wire ids are kept')
+})
+
+test('a model that needs another protocol routes to it', () => {
+  const preset = PRESETS.find((item) => item.models.some((model) => model.protocol))
+  assert.ok(preset, 'a catalog model declares its own protocol')
+  const model = preset.models.find((item) => item.protocol)
+  const connection = connectionFromPreset(preset)
+  const route = routeOf(connection, describeModel(connection, model.id))
+  assert.equal(route.protocol, model.protocol)
+  assert.equal(route.modelId, model.apiModelId ?? model.id)
 })

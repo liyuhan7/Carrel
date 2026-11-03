@@ -94,7 +94,7 @@ export type Protocol = 'openai-chat' | 'openai-responses' | 'anthropic-messages'
 export type AuthMethod = 'api-key' | 'oauth' | 'external-cli' | 'copilot' | 'none'
 
 /** Local clients whose credential store we can import from. */
-export type CredentialSource = 'claude-code' | 'codex'
+export type CredentialSource = 'claude-code' | 'codex' | 'grok'
 
 export type InputModality = 'text' | 'image'
 
@@ -106,6 +106,8 @@ export interface ModelPreset {
   name: string
   /** Wire id when it differs from the catalog id. */
   apiModelId?: string
+  /** Some catalogs mix protocols inside one provider (e.g. OpenCode Go). */
+  protocol?: Protocol
   contextWindow?: number
   input?: InputModality[]
   capabilities?: ModelCapability[]
@@ -129,6 +131,8 @@ export interface ProviderPreset {
   name: string
   protocol: Protocol
   baseUrl: string
+  /** Sidebar section: 订阅通道 / 国内直连 / 海外直连 / 套餐接入点. */
+  group?: string
   auth: AuthMethod[]
   oauth?: OAuthPreset
   /** CLI credential stores this connection may import from. */
@@ -171,6 +175,8 @@ export interface ModelDescriptor {
   modelId: string
   apiModelId?: string
   displayName: string
+  /** Per-model protocol when the provider mixes endpoints. */
+  protocol?: Protocol
   contextWindow?: number
   input: InputModality[]
   capabilities: ModelCapability[]
@@ -251,7 +257,6 @@ export interface SourceDetection {
   found: boolean
   account?: string
   expiresAt?: number
-  file?: string
 }
 
 export interface DeviceCode {
@@ -364,6 +369,7 @@ export interface Bridge {
   subscriptionDetect(sources: CredentialSource[]): Promise<Record<string, SourceDetection>>
   subscriptionImport(id: string, source: CredentialSource): Promise<{ ok: boolean; message: string }>
   subscriptionSignout(id: string): Promise<void>
+  subscriptionRefresh(id: string): Promise<{ ok: boolean; message: string }>
   copilotBegin(): Promise<DeviceCode>
   copilotPoll(id: string, deviceCode: string): Promise<{ status: 'pending' | 'ok' | 'error'; message?: string; account?: string }>
   startAI(reqId: string, payload: AIPayload): Promise<boolean>

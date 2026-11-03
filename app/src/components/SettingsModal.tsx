@@ -4,7 +4,7 @@ import {
   CAPABILITY_LABEL, CUSTOM_PRESET_ID, PROTOCOL_LABEL, authLabel, describeModel,
   enabledModels, modelRows, presetOf, routeOf
 } from '../lib/providers'
-import type { AuthMethod, CredentialSource, DeviceCode, SourceDetection } from '../types'
+import type { AuthMethod, CredentialSource, DeviceCode, ProviderConnection, SourceDetection } from '../types'
 
 const AUTH_LABEL: Record<AuthMethod, string> = {
   'api-key': 'API Key',
@@ -16,7 +16,25 @@ const AUTH_LABEL: Record<AuthMethod, string> = {
 
 const SOURCE_LABEL: Record<CredentialSource, string> = {
   'claude-code': 'Claude Code',
-  codex: 'Codex CLI'
+  codex: 'Codex CLI',
+  grok: 'Grok Build'
+}
+
+function expiryLabel (expiresAt?: number): string {
+  if (!expiresAt) return ''
+  const date = new Date(expiresAt)
+  const stamp = `${date.getMonth() + 1}-${date.getDate()} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+  return expiresAt < Date.now() ? `（${stamp} 已过期）` : `（有效至 ${stamp}）`
+}
+
+/** Sidebar sections follow the catalog order (订阅 / 直连 / 套餐). */
+function groupConnections (connections: ProviderConnection[]): Array<[string, ProviderConnection[]]> {
+  const sections = new Map<string, ProviderConnection[]>()
+  for (const connection of connections) {
+    const group = presetOf(connection)?.group ?? '自定义'
+    sections.set(group, [...(sections.get(group) ?? []), connection])
+  }
+  return [...sections.entries()]
 }
 
 export function SettingsModal () {
@@ -38,6 +56,7 @@ export function SettingsModal () {
   const signOut = useStore((s) => s.signOut)
   const detectSources = useStore((s) => s.detectSources)
   const importSource = useStore((s) => s.importSource)
+  const refreshSubscription = useStore((s) => s.refreshSubscription)
   const copilotBegin = useStore((s) => s.copilotBegin)
   const copilotPoll = useStore((s) => s.copilotPoll)
   const refreshModels = useStore((s) => s.refreshModels)
@@ -222,12 +241,21 @@ export function SettingsModal () {
             )
           })}
           <div className="form-row">
-            <span className="hint">{connection.hasSubscription ? `已导入${connection.subscriptionAccount ? ` · ${connection.subscriptionAccount}` : ''}` : '未导入凭证'}</span>
+            <span className="hint">
+              {connection.hasSubscription
+                ? `已导入${connection.subscriptionAccount ? ` · ${connection.subscriptionAccount}` : ''}${expiryLabel(connection.subscriptionExpiresAt)}`
+                : '未导入凭证'}
+            </span>
             <span className="tool-spacer" />
             {connection.hasSubscription ? (
-              <button type="button" className="btn btn-ghost" onClick={() => void signOut(connection.id)}>
-                移除凭证
-              </button>
+              <>
+                <button type="button" className="btn btn-small" onClick={() => void refreshSubscription(connection.id)}>
+                  刷新凭证
+                </button>
+                <button type="button" className="btn btn-ghost" onClick={() => void signOut(connection.id)}>
+                  移除凭证
+                </button>
+              </>
             ) : null}
           </div>
         </>
@@ -273,19 +301,24 @@ export function SettingsModal () {
 
         <div className="modal-body settings-body">
           <aside className="provider-list" aria-label="模型服务列表">
-            {connections.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                className={`provider-item${item.id === connection.id ? ' is-active' : ''}`}
-                onClick={() => setSelected(item.id)}
-              >
-                <span className="provider-name">{item.name}</span>
-                {item.id === activeModel.connectionId ? <span className="badge">当前</span> : null}
-                {item.authMethod !== 'none' && !item.hasKey && !item.hasOAuth && !item.hasSubscription ? (
-                  <span className="dot" title="未配置凭证" />
-                ) : null}
-              </button>
+            {groupConnections(connections).map(([group, items]) => (
+              <div key={group}>
+                <p className="provider-group">{group}</p>
+                {items.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className={`provider-item${item.id === connection.id ? ' is-active' : ''}`}
+                    onClick={() => setSelected(item.id)}
+                  >
+                    <span className="provider-name">{item.name}</span>
+                    {item.id === activeModel.connectionId ? <span className="badge">当前</span> : null}
+                    {item.authMethod !== 'none' && !item.hasKey && !item.hasOAuth && !item.hasSubscription ? (
+                      <span className="dot" title="未配置凭证" />
+                    ) : null}
+                  </button>
+                ))}
+              </div>
             ))}
             <button type="button" className="provider-item provider-add" onClick={() => setSelected(addConnection())}>
               + 自定义服务

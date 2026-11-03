@@ -216,6 +216,13 @@ function registerIpc () {
     await subscriptions.signout(id)
     return true
   })
+  ipcMain.handle('subscription:refresh', async (_event, id) => {
+    try {
+      return await subscriptions.refreshAuth(id)
+    } catch (err) {
+      return { ok: false, message: err?.message || '刷新凭证失败' }
+    }
+  })
   ipcMain.handle('copilot:begin', async () => {
     try {
       return { ok: true, ...(await subscriptions.copilotBegin()) }

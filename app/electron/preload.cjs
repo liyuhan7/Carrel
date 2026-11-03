@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld('cs', {
   subscriptionDetect: (sources) => ipcRenderer.invoke('subscription:detect', sources),
   subscriptionImport: (id, source) => ipcRenderer.invoke('subscription:import', id, source),
   subscriptionSignout: (id) => ipcRenderer.invoke('subscription:signout', id),
+  subscriptionRefresh: (id) => ipcRenderer.invoke('subscription:refresh', id),
   copilotBegin: () => ipcRenderer.invoke('copilot:begin'),
   copilotPoll: (id, deviceCode) => ipcRenderer.invoke('copilot:poll', id, deviceCode),
   startAI: (reqId, payload) => ipcRenderer.invoke('ai:start', reqId, payload),

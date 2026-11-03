@@ -7,12 +7,19 @@ import { NotesPage } from './components/NotesPage'
 import { Workspace } from './components/Workspace'
 import { SettingsModal } from './components/SettingsModal'
 import { Toasts } from './components/Toasts'
+// >>> integration:unified-content-index
+import { SearchPanel } from './index/SearchPanel'
+import { useIndexRuntime } from './index/runtime'
+// <<< integration:unified-content-index
 
 export default function App () {
   const hydrated = useStore((s) => s.hydrated)
   const view = useStore((s) => s.view)
   const settingsOpen = useStore((s) => s.settingsOpen)
   const [dragging, setDragging] = useState(false)
+  // >>> integration:unified-content-index
+  useIndexRuntime()
+  // <<< integration:unified-content-index
 
   useEffect(() => {
     void useStore.getState().hydrate()
@@ -77,6 +84,9 @@ export default function App () {
       </main>
       {dragging && <div className="drop-hint">松开即可导入</div>}
       {settingsOpen && <SettingsModal />}
+      {/* >>> integration:unified-content-index */}
+      <SearchPanel />
+      {/* <<< integration:unified-content-index */}
       <Toasts />
     </div>
   )

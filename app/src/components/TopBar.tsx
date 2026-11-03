@@ -1,4 +1,7 @@
 import { useStore } from '../store'
+// >>> integration:unified-content-index
+import { useIndexUi } from '../index/uiState'
+// <<< integration:unified-content-index
 
 const ITEMS = [
   { id: 'home', label: '首页' },
@@ -33,6 +36,16 @@ export function TopBar () {
       </nav>
 
       <div className="top-actions">
+        {/* >>> integration:unified-content-index */}
+        <button
+          type="button"
+          className="btn btn-ghost"
+          title="统一内容检索（Ctrl/Cmd + Shift + F）"
+          onClick={() => useIndexUi.getState().openSearch()}
+        >
+          检索
+        </button>
+        {/* <<< integration:unified-content-index */}
         <button type="button" className="btn btn-ghost" onClick={() => openSettings()}>
           模型服务
         </button>

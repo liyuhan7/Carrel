@@ -744,6 +744,7 @@ export function ReaderPane ({ collapsed, onExpand, onCollapse }: {
               text={popup.text}
               initialNote={popup.note}
               onClose={() => setPopup(null)}
+              capture={{ fileId: file.id, fileName: file.name, page }}
               onHighlight={(kind) => void commitCreate(popup.draft, kind)}
               onNote={(body) => void commitCreate(popup.draft, 'note', body)}
               onCopy={() => {

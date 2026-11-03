@@ -3,6 +3,7 @@
 
 import { useEffect, useState } from 'react'
 import type { AnnotationKind } from '../../shared/contracts/reader'
+import { ReaderCaptureEntry } from '../../notes/ReaderCaptureEntry'
 
 interface SelectionMenuProps {
   x: number
@@ -16,6 +17,8 @@ interface SelectionMenuProps {
   onAsk: () => void
   onExplain: () => void
   onAddToNote: () => void
+  /** When set, "加入笔记" opens the note module's capture entry. */
+  capture?: { fileId: string; fileName: string; page: number }
 }
 
 export function SelectionMenu ({
@@ -29,9 +32,11 @@ export function SelectionMenu ({
   onCopy,
   onAsk,
   onExplain,
-  onAddToNote
+  onAddToNote,
+  capture
 }: SelectionMenuProps) {
   const [noteMode, setNoteMode] = useState(Boolean(initialNote))
+  const [captureOpen, setCaptureOpen] = useState(false)
   const [body, setBody] = useState('')
 
   useEffect(() => {
@@ -44,6 +49,20 @@ export function SelectionMenu ({
 
   const left = typeof window === 'undefined' ? x : Math.max(8, Math.min(x, window.innerWidth - 372))
   const top = typeof window === 'undefined' ? y : Math.max(8, Math.min(y + 16, window.innerHeight - 210))
+
+  if (captureOpen && capture) {
+    return (
+      <ReaderCaptureEntry
+        fileId={capture.fileId}
+        fileName={capture.fileName}
+        page={capture.page}
+        text={text}
+        x={left}
+        y={top}
+        onClose={onClose}
+      />
+    )
+  }
 
   if (noteMode) {
     return (
@@ -97,8 +116,8 @@ export function SelectionMenu ({
       <button type="button" onClick={onExplain}>
         AI 解释
       </button>
-      {/* >>> integration:note-capture — the note module mounts its CaptureMenu here. */}
-      <button type="button" onClick={onAddToNote}>
+      {/* >>> integration:note-capture — the note module mounts its capture entry here. */}
+      <button type="button" onClick={() => (capture ? setCaptureOpen(true) : onAddToNote())}>
         加入笔记
       </button>
       {/* <<< integration:note-capture */}

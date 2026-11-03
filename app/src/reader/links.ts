@@ -9,12 +9,14 @@ import type {
   StateTransactionService
 } from '../shared/contracts/content'
 import type { SelectionDraft } from '../shared/contracts/reader'
+// One conversation identity for the whole app; the index module owns the constant.
+import { MAIN_CONVERSATION_ID } from '../index/resources.ts'
 
 /**
  * This build has a single AI thread, so the conversation resource uses a stable
  * source id. When real conversations land, pass the conversation id instead.
  */
-export const MAIN_CONVERSATION_SOURCE_ID = 'main-chat'
+export const MAIN_CONVERSATION_SOURCE_ID = MAIN_CONVERSATION_ID
 
 export interface AsksAboutDeps {
   transactions: StateTransactionService

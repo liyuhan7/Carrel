@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import { useStore } from '../store'
 import type { Note } from '../types'
 import { renderNote } from '../lib/markdown'
-import { formatTime, truncate } from '../lib/format'
+import { truncate } from '../lib/format'
 // >>> integration:note-capture-editing
 import { noteSessions } from '../notes/session'
 import { sourceStatus, type SourceStatusInput } from '../notes/sourceStatus'
@@ -233,7 +233,6 @@ export function NoteEditor ({ note, variant }: { note: Note; variant: 'pane' | '
   // >>> integration:note-capture-editing
   const inlineRefIds = new Set((note.body.match(/csref:([^\s)]+)/g) ?? []).map((item) => item.slice(6)))
   const chipRefs = note.refs.filter((ref) => !inlineRefIds.has(ref.id))
-  const sourceCount = note.refs.length + inlineRefIds.size
   // <<< integration:note-capture-editing
 
   return (
@@ -292,16 +291,12 @@ export function NoteEditor ({ note, variant }: { note: Note; variant: 'pane' | '
         <SourceInsertButton label="插入来源" />
         {flash ? <span className="note-flash" role="status">{flash}</span> : null}
         {/* <<< integration:note-capture-editing */}
-        <div className="note-meta">
-          {note.body.length} 字 · {sourceCount} 个来源
-        </div>
       </div>
 
       {panel || rewrite?.noteId === note.id ? (
         <div className="rewrite-panel">
           <div className="rewrite-head">
             <span>AI 整理</span>
-            <span className="hint">只改写选中的片段，来源锚点不动</span>
           </div>
           <div className="rewrite-presets">
             {['润色，保持原意', '精简，去掉重复', '整理成提纲', '补充一个例子'].map((item) => (
@@ -440,10 +435,10 @@ export function NoteEditor ({ note, variant }: { note: Note; variant: 'pane' | '
           <button type="button" className="link" onClick={insertSelectionToNote}>
             插入当前选中内容
           </button>
-        ) : (
-          <span>最近编辑 {formatTime(note.updatedAt)}</span>
-        )}
-        <span className="note-save">{saveStatus === 'saved' ? '已保存' : saveStatus === 'saving' ? '保存中…' : '保存失败'}</span>
+        ) : null}
+        {saveStatus !== 'saved' ? (
+          <span className="note-save">{saveStatus === 'saving' ? '保存中…' : '保存失败'}</span>
+        ) : null}
       </div>
     </div>
   )

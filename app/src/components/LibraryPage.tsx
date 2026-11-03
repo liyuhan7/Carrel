@@ -36,7 +36,6 @@ export function LibraryPage () {
       <div className="page-head">
         <div>
           <h1>资料库</h1>
-          <p className="page-sub">{files.length} 份资料，原文件保存在本地</p>
         </div>
         <button type="button" className="btn btn-primary" onClick={() => void importDialog()}>
           导入资料
@@ -64,7 +63,6 @@ export function LibraryPage () {
       {files.length === 0 ? (
         <div className="empty-block">
           <h2>资料库是空的</h2>
-          <p>支持 PDF 与 Markdown。PPTX、DOCX 的版面渲染在后续版本提供。</p>
           <button type="button" className="btn btn-primary" onClick={() => void importDialog()}>
             导入资料
           </button>
@@ -72,7 +70,6 @@ export function LibraryPage () {
       ) : filtered.length === 0 ? (
         <div className="empty-block">
           <h2>没有匹配的资料</h2>
-          <p>换个关键词或筛选条件试试。</p>
         </div>
       ) : (
         <table className="table">

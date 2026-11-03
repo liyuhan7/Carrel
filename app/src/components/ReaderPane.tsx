@@ -559,7 +559,6 @@ export function ReaderPane ({ collapsed, onExpand, onCollapse }: {
       {!file ? (
         <div className="doc-empty">
           <h2>打开一份资料</h2>
-          <p>从资料库选择文件，或直接导入新的课件。</p>
           <div className="row">
             <button type="button" className="btn btn-primary" onClick={() => void importDialog()}>
               导入资料
@@ -728,13 +727,8 @@ export function ReaderPane ({ collapsed, onExpand, onCollapse }: {
           <div className="reader-foot">
             <span>{formatBytes(file.size)}</span>
             <span>{file.ext.toUpperCase()}</span>
-            <span className="reader-state-hint">
-              <span className="dot" />
-              {resourceId && readingStates[resourceId] ? `阅读位置已记录 · 第 ${page} 页` : '阅读位置会在本机记录'}
-            </span>
             <span className="tool-spacer" />
             {file.changed ? <span className="flag is-error">文件已在外部修改</span> : null}
-            <span className="muted">选中正文可直接提问</span>
           </div>
 
           {popup ? (

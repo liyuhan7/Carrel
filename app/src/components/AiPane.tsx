@@ -144,7 +144,6 @@ export function AiPane ({ collapsed, onExpand, onCollapse }: {
       <div className="chat" ref={listRef}>
         {messages.length === 0 ? (
           <div className="chat-empty">
-            <p>{activeFile ? '选中正文提问，或从下面的问题开始。' : '先在左侧打开一份资料。'}</p>
             <div className="suggestions">
               {['解释这一页的核心概念', '这一页有哪些容易混淆的地方', '帮我总结本页要点'].map((question) => (
                 <button key={question} type="button" disabled={!activeFile} onClick={() => void sendQuestion(question)}>
@@ -175,7 +174,7 @@ export function AiPane ({ collapsed, onExpand, onCollapse }: {
             rows={2}
             value={input}
             disabled={!activeFile}
-            placeholder={activeFile ? `针对第 ${page} 页提问，Enter 发送` : '先打开一份资料'}
+            placeholder={activeFile ? `针对第 ${page} 页提问` : '先打开一份资料'}
             onChange={(event) => {
               setInput(event.target.value)
               event.target.style.height = 'auto'

@@ -196,7 +196,7 @@ export function SearchPanel() {
             </button>
           ))}
           <span className="search-count">
-            {searching ? '检索中…' : query.trim() ? `${results.length} 条结果` : 'Ctrl/Cmd + Shift + F 打开'}
+            {searching ? '检索中…' : query.trim() ? `${results.length} 条结果` : null}
           </span>
         </div>
 
@@ -235,9 +235,6 @@ export function SearchPanel() {
             </section>
           ))}
 
-          {!query.trim() ? (
-            <p className="search-hint">输入关键词即可检索全部资料、会话和笔记；没有建立链接的内容也能被搜到。</p>
-          ) : null}
           {query.trim() && !searching && !results.length ? (
             <p className="search-hint">没有匹配的内容。</p>
           ) : null}
@@ -247,11 +244,6 @@ export function SearchPanel() {
               还有 {incomplete} 份内容尚未索引完成，结果可能不完整。
             </p>
           ) : null}
-        </div>
-
-        <div className="search-foot">
-          <span>↑↓ 选择 · Enter 打开 · Esc 关闭</span>
-          <span className="search-foot-note">检索命中不等于已建立链接</span>
         </div>
       </div>
     </div>

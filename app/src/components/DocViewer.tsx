@@ -54,7 +54,6 @@ function Unsupported ({ file }: { file: FileRec }) {
   return (
     <div className="doc-empty">
       <h2>{file.name}</h2>
-      <p>首版只渲染 PDF、Markdown 和图片。{file.ext.toUpperCase()} 的版面保真需要外部排版引擎，安排在后续版本。</p>
       <button type="button" className="btn" onClick={() => revealFile(file.id)}>
         在文件夹中显示
       </button>

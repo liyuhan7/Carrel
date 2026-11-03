@@ -46,9 +46,11 @@ export function Workspace () {
           )}
         </div>
         <div className="ws-actions">
-          <span className={`save-state is-${saveStatus}`}>
-            {saveStatus === 'saved' ? '已保存' : saveStatus === 'saving' ? '保存中…' : '保存失败'}
-          </span>
+          {saveStatus !== 'saved' ? (
+            <span className={`save-state is-${saveStatus}`}>
+              {saveStatus === 'saving' ? '保存中…' : '保存失败'}
+            </span>
+          ) : null}
           <button type="button" className="btn btn-ghost btn-small" onClick={resetLayout}>
             重置布局
           </button>

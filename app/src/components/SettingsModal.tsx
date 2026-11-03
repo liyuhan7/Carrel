@@ -124,7 +124,7 @@ export function SettingsModal () {
 
   const credentialPane = () => {
     if (connection.authMethod === 'none') {
-      return <p className="hint">该服务不需要凭证，回答由本地模板生成。</p>
+      return null
     }
     if (connection.authMethod === 'api-key') {
       return (
@@ -198,7 +198,6 @@ export function SettingsModal () {
             ) : null}
             <span className="hint">{connection.hasOAuth ? '已授权' : '未登录'}</span>
           </div>
-          <p className="hint">授权在系统浏览器中完成，令牌保存在系统安全存储里，不会出现在配置文件中。</p>
         </>
       )
     }
@@ -231,7 +230,6 @@ export function SettingsModal () {
               </button>
             ) : null}
           </div>
-          <p className="hint">读取本机已登录客户端的凭证，属于第三方通道，客户端更新后可能失效，需要重新登录并导入。</p>
         </>
       )
     }
@@ -241,7 +239,6 @@ export function SettingsModal () {
           <div className="device-code">
             <p>在 GitHub 页面输入代码：</p>
             <code>{copilot.userCode}</code>
-            <p className="hint">已自动轮询授权结果，完成后这里会自动关闭。</p>
           </div>
         ) : null}
         <div className="form-row">
@@ -255,7 +252,6 @@ export function SettingsModal () {
           ) : null}
           <span className="hint">{connection.hasSubscription ? `已授权${connection.subscriptionAccount ? ` · ${connection.subscriptionAccount}` : ''}` : '未授权'}</span>
         </div>
-        <p className="hint">GitHub Copilot 没有公开的第三方 API，这条通道复用了编辑器的登录方式，可能随时失效。</p>
       </>
     )
   }
@@ -376,7 +372,6 @@ export function SettingsModal () {
 
             <div className="model-head">
               <span>模型</span>
-              <span className="hint">启用后出现在 AI 面板的模型菜单里</span>
               <span className="tool-spacer" />
               <button type="button" className="btn btn-small" onClick={() => void refreshModels(connection.id)}>
                 拉取模型
@@ -448,7 +443,6 @@ export function SettingsModal () {
         </div>
 
         <footer className="modal-foot">
-          <span className="hint">资料只在提问时按所选范围发送</span>
           <button type="button" className="btn" onClick={closeSettings}>
             完成
           </button>

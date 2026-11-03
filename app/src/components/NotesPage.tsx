@@ -32,7 +32,6 @@ export function NotesPage () {
       <div className="page-head">
         <div>
           <h1>笔记</h1>
-          <p className="page-sub">{notes.length} 份笔记 · 自动保存</p>
         </div>
         {/* >>> integration:note-capture-editing */}
         <div className="row">
@@ -84,7 +83,6 @@ export function NotesPage () {
           ) : (
             <div className="empty-block">
               <h2>还没有笔记</h2>
-              <p>笔记独立于资料，可以从任何课件里引用内容。</p>
               <button type="button" className="btn btn-primary" onClick={() => createNote()}>
                 新建笔记
               </button>

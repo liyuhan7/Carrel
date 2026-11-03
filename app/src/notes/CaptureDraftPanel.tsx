@@ -76,7 +76,6 @@ export function CaptureDraftPanel () {
       <section className="note-draft" role="dialog" aria-label="整理 AI 回答到笔记">
         <div className="note-draft-head">
           <h2>整理到笔记</h2>
-          <span className="hint">确认后才会写入，原始回答不会改变</span>
         </div>
 
         <div className="note-draft-body">
@@ -122,9 +121,7 @@ export function CaptureDraftPanel () {
 
           <div className="note-draft-sources">
             <p>来源（默认“整理自”，可取消；取消后不创建任何来源链接）</p>
-            {draft.sourceCandidates.length === 0 ? (
-              <p className="note-source-empty">这条回答没有可核实的引用，插入后不产生来源</p>
-            ) : (
+            {draft.sourceCandidates.length === 0 ? null : (
               draft.sourceCandidates.map((candidate, index) => {
                 const resource = resources[candidate.resourceId]
                 const label = candidate.selector.type === 'document-text'
@@ -163,7 +160,6 @@ export function CaptureDraftPanel () {
             取消
           </button>
           <span className="tool-spacer" />
-          <span className="hint">取消不会写入正文、来源或链接</span>
         </div>
       </section>
     </div>

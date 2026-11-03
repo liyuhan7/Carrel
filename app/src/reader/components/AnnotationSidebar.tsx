@@ -150,9 +150,7 @@ export function AnnotationSidebar ({
       {tab === 'annotations' ? (
         <div className="ann-list" role="list">
           {sorted.length === 0 ? (
-            <p className="ann-empty">
-              选中正文后用工具栏的「高亮 / 下划线 / 批注」创建标注。标注只保存在本地，不会自动生成来源链接。
-            </p>
+            <p className="ann-empty">还没有标注</p>
           ) : (
             sorted.map((item) => {
               const annotation = item.annotation
@@ -229,9 +227,7 @@ export function AnnotationSidebar ({
       ) : (
         <div className="ann-list" role="list">
           {linkRows.length === 0 ? (
-            <p className="ann-empty">
-              还没有关联内容。只有实际发送带选区的提问、或从笔记引用原文时才会建立来源关系；高亮本身不会自动生成链接。
-            </p>
+            <p className="ann-empty">还没有关联内容</p>
           ) : (
             linkRows.map(({ link, other, otherResource, outgoing }) => (
               <button

@@ -58,7 +58,6 @@ export function HomePage () {
           ) : (
             <section className="empty-hero">
               <h2>还没有导入资料</h2>
-              <p>导入 PDF 或 Markdown，选中正文就能提问，回答和摘录都会带上出处。</p>
               <button type="button" className="btn btn-primary" onClick={() => void importDialog()}>
                 导入第一份资料
               </button>
@@ -72,9 +71,7 @@ export function HomePage () {
                 全部资料
               </button>
             </div>
-            {recentFiles.length === 0 ? (
-              <p className="muted">导入的资料会出现在这里。</p>
-            ) : (
+            {recentFiles.length === 0 ? null : (
               <ul className="file-list">
                 {recentFiles.map((file) => (
                   <li key={file.id}>
@@ -126,15 +123,6 @@ export function HomePage () {
             <button type="button" className="link add-note" onClick={() => { createNote(); setView('notes') }}>
               ＋ 新建笔记
             </button>
-          </section>
-
-          <section className="section quiet">
-            <h3>学习空间的键盘操作</h3>
-            <dl className="keys">
-              <div><dt>导入资料</dt><dd>Ctrl O</dd></div>
-              <div><dt>聚焦提问</dt><dd>Ctrl K</dd></div>
-              <div><dt>立即保存</dt><dd>Ctrl S</dd></div>
-            </dl>
           </section>
         </aside>
       </div>

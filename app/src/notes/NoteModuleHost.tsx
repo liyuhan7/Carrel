@@ -168,7 +168,6 @@ function NoteSwitcher () {
           ))}
           {filtered.length === 0 ? <p className="note-switcher-empty">没有匹配的笔记</p> : null}
         </div>
-        <div className="note-switcher-foot">↑↓ 选择 · Enter 打开 · Esc 关闭 · 最多显示 12 条</div>
       </div>
     </div>
   )

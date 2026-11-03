@@ -87,7 +87,7 @@ export function SourceInsertButton ({ label = '插入来源' }: { label?: string
                 <span className="menu-meta">{truncate(selection.text, 42)}</span>
               </button>
             ) : (
-              <p className="note-source-empty">先在阅读区选中文字，或从下面的位置选择</p>
+              <p className="note-source-empty">没有选区</p>
             )}
           </div>
 

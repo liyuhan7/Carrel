@@ -275,8 +275,12 @@ function withAuth (connection: ProviderConnection, auth?: ProviderAuthState): Pr
 const REWRITE_PROMPT = '你是笔记编辑器。只改写用户给出的片段：保持原意与事实，保留 Markdown 结构，只输出改写后的片段本身，不要解释、不要加标题、不要代码块围栏。'
 
 export const useStore = create<Store>((set, get) => {
-  const persist = () => {
-    set({ saveStatus: 'saving' })
+  /**
+   * `quiet` writes the same snapshot without flashing the save indicator:
+   * reading progress and view state are not document content.
+   */
+  const persist = (quiet = false) => {
+    if (!quiet) set({ saveStatus: 'saving' })
     clearTimeout(saveTimer)
     saveTimer = setTimeout(async () => {
       try {
@@ -742,7 +746,8 @@ export const useStore = create<Store>((set, get) => {
           ...(resourceId ? { readingStates } : {})
         }
       })
-      persist()
+      // Reading progress is not content: save it without the indicator.
+      persist(true)
     },
 
     setZoom: (zoom) => {
@@ -765,7 +770,7 @@ export const useStore = create<Store>((set, get) => {
           ...(resourceId ? { readingStates } : {})
         }
       })
-      persist()
+      persist(true)
     },
 
     setReaderPanel: (panel) => set((s) => ({ workspace: { ...s.workspace, readerPanel: panel } })),
@@ -896,7 +901,8 @@ export const useStore = create<Store>((set, get) => {
           }
         }
       })
-      persist()
+      // Zoom, scroll ratio and annotation visibility are view state.
+      persist(true)
     },
     // <<< integration:course-reading-annotation
 

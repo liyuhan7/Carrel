@@ -16,6 +16,29 @@ export function rectsFromRange (pageEl: HTMLElement, range: Range): Rect[] {
     ])
 }
 
+/** The rendered page box that owns a DOM node (pages are stacked in one scroll container). */
+export function pageElementOf (node: Node | null | undefined): HTMLElement | null {
+  if (!node) return null
+  const element = node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement
+  return element?.closest<HTMLElement>('[data-pdf-page]') ?? null
+}
+
+/**
+ * Clip a selection range to one page's text layer. A drag that runs past the
+ * page edge still belongs to the page it started on, and must not produce
+ * rectangles from the neighbouring page.
+ */
+export function rangeWithinPage (range: Range, pageEl: HTMLElement): Range | null {
+  const boundary = pageEl.querySelector<HTMLElement>('.textLayer') ?? pageEl
+  const startInside = boundary.contains(range.startContainer)
+  const endInside = boundary.contains(range.endContainer)
+  if (!startInside && !endInside) return null
+  const scoped = range.cloneRange()
+  if (!startInside) scoped.setStart(boundary, 0)
+  if (!endInside) scoped.setEnd(boundary, boundary.childNodes.length)
+  return scoped
+}
+
 /**
  * Map a quote back to rectangles in the rendered text layer, so a note
  * reference or a verified citation can actually flash the passage it cites.
@@ -57,11 +80,11 @@ export function locateQuoteRects (pageEl: HTMLElement, quote: string): Rect[] {
 export function pageTextSelection (pageEl: HTMLElement): { text: string; rects: Rect[] } | null {
   const selection = window.getSelection()
   if (!selection || selection.isCollapsed || selection.rangeCount === 0) return null
-  const range = selection.getRangeAt(0)
-  if (!pageEl.contains(range.commonAncestorContainer)) return null
-  const text = selection.toString().replace(/\s+/g, ' ').trim()
+  const scoped = rangeWithinPage(selection.getRangeAt(0), pageEl)
+  if (!scoped) return null
+  const text = scoped.toString().replace(/\s+/g, ' ').trim()
   if (!text) return null
-  const rects = rectsFromRange(pageEl, range)
+  const rects = rectsFromRange(pageEl, scoped)
   if (!rects.length) return null
   return { text, rects }
 }

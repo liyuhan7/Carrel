@@ -10,7 +10,7 @@ import type {
   SelectionDraft
 } from '../../shared/contracts/reader'
 import { cachedPdf } from '../../lib/pdf'
-import { locateQuoteRects, rectsFromRange } from '../../lib/textLayer'
+import { locateQuoteRects, pageElementOf, rangeWithinPage, rectsFromRange } from '../../lib/textLayer'
 import type { Rotation } from '../geometry.ts'
 import { geometryBounds, isRotation, normalizeRect, pointFromClient, rectFromClient } from '../geometry.ts'
 import { buildPageTextIndex, extractQuote, findQuoteCandidates, normalizeForMatch } from '../textMapping.ts'
@@ -40,6 +40,12 @@ export interface PdfAdapter extends PagedAdapter {
 function normaliseRotation (value: number): Rotation {
   const rounded = ((Math.round(value / 90) * 90) % 360 + 360) % 360
   return isRotation(rounded) ? rounded : 0
+}
+
+/** The page element records its own rotation, so a stacked page needs no attach. */
+function rotationOfElement (element: HTMLElement): Rotation {
+  const raw = Number(element.dataset.pdfRotation)
+  return Number.isFinite(raw) ? normaliseRotation(raw) : 0
 }
 
 /** Normalised offset of a DOM boundary measured from the start of the text layer. */
@@ -92,15 +98,21 @@ export function createPdfAdapter (deps: PdfAdapterDeps): PdfAdapter {
     },
 
     captureSelection (): SelectionDraft | null {
-      const current = handle
-      if (!current) return null
       const selection = window.getSelection()
       if (!selection || selection.isCollapsed || !selection.rangeCount) return null
       const range = selection.getRangeAt(0)
-      if (!current.element.contains(range.commonAncestorContainer)) return null
-      const text = selection.toString().replace(/\s+/g, ' ').trim()
+      // Pages are stacked in one scroll container: the selection itself says
+      // which page it belongs to, independent of which page is attached.
+      const element = pageElementOf(range.startContainer) ?? pageElementOf(range.endContainer)
+      const current = element
+        ? { page: Number(element.dataset.pdfPage), rotation: rotationOfElement(element), element }
+        : handle
+      if (!current || !Number.isFinite(current.page)) return null
+      const scoped = rangeWithinPage(range, current.element)
+      if (!scoped) return null
+      const text = scoped.toString().replace(/\s+/g, ' ').trim()
       if (!text) return null
-      const rects = rectsFromRange(current.element, range)
+      const rects = rectsFromRange(current.element, scoped)
       if (!rects.length) return null
 
       const raw = deps.pageText(current.page) ?? ''
@@ -111,8 +123,8 @@ export function createPdfAdapter (deps: PdfAdapterDeps): PdfAdapter {
       if (pageIndex && needle) {
         // The text layer and the extracted page text normally agree after
         // normalisation; the DOM offset then gives the exact raw position.
-        const start = normalizedOffsetWithin(current.element, range.startContainer, range.startOffset)
-        const end = normalizedOffsetWithin(current.element, range.endContainer, range.endOffset)
+        const start = normalizedOffsetWithin(current.element, scoped.startContainer, scoped.startOffset)
+        const end = normalizedOffsetWithin(current.element, scoped.endContainer, scoped.endOffset)
         let rawStart: number | null = null
         let rawEnd: number | null = null
         if (start !== null && end !== null && end > start) {

@@ -660,14 +660,29 @@ ul { margin: 0; padding: 0; list-style: none; }
   background: var(--bg-pdf-stage);
   padding: 28px 28px 44px;
 }
+/* Continuous layout: every page keeps its box so the scrollbar stays stable,
+   and only the pages near the viewport hold a canvas and a text layer. */
+.pdf-stack { display: block; }
 .pdf-page {
   position: relative;
-  margin: 0 auto;
+  margin: 0 auto 18px;
   background: var(--bg-paper);
   box-shadow: var(--shadow-paper);
   flex: 0 0 auto;
 }
+.pdf-page:last-child { margin-bottom: 0; }
+.pdf-page.is-region-tool { cursor: crosshair; }
 .pdf-canvas { display: block; }
+.pdf-loading { padding: 80px 0; text-align: center; color: var(--muted); font-size: 12.5px; }
+.pdf-page-failed {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: var(--bg-paper);
+  color: var(--danger);
+  font-size: 12px;
+}
 
 .anno-layer, .flash-layer, .textLayer, .search-layer { position: absolute; inset: 0; }
 .search-layer { z-index: 1; pointer-events: none; }

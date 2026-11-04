@@ -6,7 +6,8 @@ import type { ReadingState } from '../shared/contracts/reader'
 export const MIN_ZOOM = 0.6
 export const MAX_ZOOM = 3
 export const DEFAULT_ZOOM = 1
-export const DEFAULT_LAYOUT: ReadingState['layout'] = 'single'
+/** PDF pages are stacked in one scroll container, so scrolling turns pages. */
+export const DEFAULT_LAYOUT: ReadingState['layout'] = 'continuous'
 
 export function clampZoom (zoom: number): number {
   if (!Number.isFinite(zoom)) return DEFAULT_ZOOM
@@ -97,7 +98,8 @@ export function clampReadingState (state: ReadingState, pageCount: number, now =
     ...state,
     location,
     zoom: clampZoom(state.zoom),
-    layout: state.layout === 'continuous' ? 'continuous' : 'single',
+    // Stored states predate the continuous reader; the PDF view is continuous now.
+    layout: DEFAULT_LAYOUT,
     showAnnotations: state.showAnnotations !== false,
     updatedAt: now
   }

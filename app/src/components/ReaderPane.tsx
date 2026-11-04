@@ -100,7 +100,6 @@ export function ReaderPane ({ collapsed, onExpand, onCollapse }: {
   const [color, setColor] = useState('#d9c48f')
   const [showAnnotations, setShowAnnotations] = useState(true)
   const [filters, setFilters] = useState<AnnotationFilters>(ALL_FILTERS)
-  const [layout, setLayout] = useState<'single' | 'continuous'>('single')
   const [projected, setProjected] = useState<Record<string, Rect[]>>({})
   const [viewReadyTick, setViewReadyTick] = useState(0)
   const [scrollRestore, setScrollRestore] = useState<{ ratio: number; nonce: number } | null>(null)
@@ -110,7 +109,6 @@ export function ReaderPane ({ collapsed, onExpand, onCollapse }: {
   const viewStateRef = useRef<PdfViewState | null>(null)
   const scrollRatioRef = useRef<number | null>(null)
   const scrollTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
-  const restoreTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
   const file = files.find((item) => item.id === workspace.activeTab)
   const page = file ? workspace.pages[file.id] ?? 1 : 1
@@ -182,31 +180,35 @@ export function ReaderPane ({ collapsed, onExpand, onCollapse }: {
       }
       const clamped = clampReadingState(saved, file.pageCount || 1)
       setShowAnnotations(clamped.showAnnotations)
-      setLayout(clamped.layout)
       if (clamped.location.page && clamped.location.page !== page) setPage(file.id, clamped.location.page)
       if (clamped.zoom !== zoom) setZoom(clamped.zoom)
       if (clamped.location.scrollRatio !== undefined) {
+        // Applied once by the viewer as soon as the page stack is laid out.
         setScrollRestore({ ratio: clamped.location.scrollRatio, nonce: Date.now() })
-        clearTimeout(restoreTimer.current)
-        restoreTimer.current = setTimeout(() => setScrollRestore(null), 1200)
       }
     })()
     return () => {
       cancelled = true
-      clearTimeout(restoreTimer.current)
     }
   }, [file?.id])
 
-  // Persist page, zoom, layout and annotation visibility per resource.
+  // The pending scroll restore belongs to opening the document; leaving the
+  // reading view drops it so a remount does not jump back to the opening spot.
+  useEffect(() => {
+    if (workspace.readerPanel !== 'doc') setScrollRestore(null)
+  }, [workspace.readerPanel])
+
+  // Persist page, zoom and annotation visibility per resource. The reader is
+  // continuous: pages are stacked and scrolling turns them.
   useEffect(() => {
     if (!resourceId) return
     setReadingState(resourceId, {
       location: { kind: 'page', page },
       zoom,
-      layout,
+      layout: 'continuous',
       showAnnotations
     })
-  }, [resourceId, page, zoom, layout, showAnnotations, setReadingState])
+  }, [resourceId, page, zoom, showAnnotations, setReadingState])
 
   const resolved = useMemo<ResolvedAnnotation[]>(() => {
     if (!file || !resourceId) return []
@@ -295,7 +297,11 @@ export function ReaderPane ({ collapsed, onExpand, onCollapse }: {
   const handleViewState = useCallback((state: PdfViewState) => {
     viewStateRef.current = state
     setRotation(state.rotation)
-    setPageBox({ width: state.width, height: state.height })
+    setPageBox((previous) =>
+      previous.width === state.width && previous.height === state.height
+        ? previous
+        : { width: state.width, height: state.height }
+    )
     const current = adapterRef.current
     if (current) {
       current.attach(state.ready && state.element ? { page: state.page, rotation: state.rotation, element: state.element } : null)
@@ -718,6 +724,7 @@ export function ReaderPane ({ collapsed, onExpand, onCollapse }: {
                 onRegion={handleRegion}
                 onViewState={handleViewState}
                 onScrollRatio={handleScrollRatio}
+                onVisiblePage={(target) => setPage(file.id, target)}
               />
             ) : (
               <DocViewer file={file} zoom={zoom} />

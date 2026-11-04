@@ -5,8 +5,7 @@ import { PdfViewer, type PdfPointPayload, type PdfRegionPayload, type PdfSelectP
 import { DocViewer } from './DocViewer'
 import { TypeBadge } from './TypeBadge'
 import { formatBytes } from '../lib/format'
-import type { AnnotationStyle, ReadingState, ResolvedAnnotation, SelectionDraft } from '../shared/contracts/reader'
-import type { ContentSelector, Point, ShapeGeometry } from '../shared/contracts/content'
+import type { AnnotationStyle, ResolvedAnnotation, SelectionDraft } from '../shared/contracts/reader'
 // >>> integration:course-reading-annotation
 // The reader shell now uses the annotation module for tools, overlay, sidebar,
 // selection menu, resolution and per-resource reading state.
@@ -21,7 +20,6 @@ import {
   clampReadingState,
   createPdfAdapter,
   filterResolved,
-  geometryBounds,
   hitTestAnnotations,
   resolveAnnotations,
   type AnnotationFilters,
@@ -32,8 +30,6 @@ import {
 // <<< integration:course-reading-annotation
 
 type AnnotationDraft = SelectionDraft
-
-const EMPTY_READING_STATES: Record<string, ReadingState> = {}
 
 interface SelectionPopup {
   draft: AnnotationDraft
@@ -64,7 +60,6 @@ export function ReaderPane ({ collapsed, onExpand, onCollapse }: {
   const links = useStore((s) => s.links)
   const linkService = useStore((s) => s.linkService)
   const navigation = useStore((s) => s.navigation)
-  const readingStates = useStore((s) => s.readingStates ?? EMPTY_READING_STATES)
   const setPage = useStore((s) => s.setPage)
   const closeTab = useStore((s) => s.closeTab)
   const openFile = useStore((s) => s.openFile)
@@ -97,6 +92,7 @@ export function ReaderPane ({ collapsed, onExpand, onCollapse }: {
   const [rotation, setRotation] = useState<Rotation>(0)
   const [pageBox, setPageBox] = useState({ width: 0, height: 0 })
   const [tool, setTool] = useState<ReaderTool>('select')
+  const [panMode, setPanMode] = useState(false)
   const [color, setColor] = useState('#d9c48f')
   const [showAnnotations, setShowAnnotations] = useState(true)
   const [filters, setFilters] = useState<AnnotationFilters>(ALL_FILTERS)
@@ -143,22 +139,24 @@ export function ReaderPane ({ collapsed, onExpand, onCollapse }: {
 
   useEffect(() => {
     if (!popup) return
-    const close = (event: MouseEvent) => {
+    // pointerdown, not mousedown: the viewer cancels pointerdown to own text
+    // selection, which suppresses the compatibility mousedown event.
+    const close = (event: PointerEvent) => {
       if (!(event.target as HTMLElement).closest('.selection-pop')) setPopup(null)
     }
-    document.addEventListener('mousedown', close)
-    return () => document.removeEventListener('mousedown', close)
+    document.addEventListener('pointerdown', close)
+    return () => document.removeEventListener('pointerdown', close)
   }, [popup])
 
   useEffect(() => {
     if (!selected) return
-    const close = (event: MouseEvent) => {
+    const close = (event: PointerEvent) => {
       const target = event.target as HTMLElement
       if (target.closest('.anno-popover') || target.closest('.anno-note-marker')) return
       setSelected(null)
     }
-    document.addEventListener('mousedown', close)
-    return () => document.removeEventListener('mousedown', close)
+    document.addEventListener('pointerdown', close)
+    return () => document.removeEventListener('pointerdown', close)
   }, [selected])
 
   // Restore this document's reading state once its resource identity exists.
@@ -644,6 +642,8 @@ export function ReaderPane ({ collapsed, onExpand, onCollapse }: {
               setShowAnnotations(visible)
               if (resourceId) setReadingState(resourceId, { showAnnotations: visible })
             }}
+            pan={panMode}
+            onPan={setPanMode}
             canUndo={canUndo}
             undoLabel={undoLabel}
             onUndo={() => void undo()}
@@ -715,6 +715,7 @@ export function ReaderPane ({ collapsed, onExpand, onCollapse }: {
                 page={page}
                 zoom={zoom}
                 tool={tool}
+                panMode={panMode}
                 focusQuote={focusQuote && focusQuote.fileId === file.id ? focusQuote : null}
                 searchTerm={searchOpen ? query.trim() : ''}
                 scrollRestore={scrollRestore}

@@ -69,6 +69,9 @@ interface ToolbarProps {
   onUndo: () => void
   filters: AnnotationFilters
   onFilters: (filters: AnnotationFilters) => void
+  /** Hand tool: drag anywhere to pan a zoomed page instead of selecting. */
+  pan: boolean
+  onPan: (pan: boolean) => void
 }
 
 type OpenMenu = 'mark' | 'draw' | 'color' | 'manage' | null
@@ -84,7 +87,9 @@ export function ReaderToolbar ({
   undoLabel,
   onUndo,
   filters,
-  onFilters
+  onFilters,
+  pan,
+  onPan
 }: ToolbarProps) {
   const [menu, setMenu] = useState<OpenMenu>(null)
   const rootRef = useRef<HTMLDivElement>(null)
@@ -107,6 +112,7 @@ export function ReaderToolbar ({
 
   const choose = (next: ReaderTool) => {
     onTool(next)
+    if (pan) onPan(false)
     setMenu(null)
   }
 
@@ -119,12 +125,31 @@ export function ReaderToolbar ({
       <div className="reader-toolbar-row">
         <div className="reader-toolbar-main">
           <div className="tool-group" role="group" aria-label="标注工具">
+            <button
+              type="button"
+              className={`tool reader-tool${pan ? ' is-active' : ''}`}
+              aria-pressed={pan}
+              title="拖拽页面（也可以按住空格或中键拖动）"
+              onClick={() => {
+                if (pan) {
+                  onPan(false)
+                  return
+                }
+                onTool('select')
+                setMenu(null)
+                onPan(true)
+              }}
+            >
+              拖拽
+            </button>
+
             {PRIMARY.map((item) => (
               <button
                 key={item.tool}
                 type="button"
-                className={`tool reader-tool${tool === item.tool ? ' is-active' : ''}`}
-                aria-pressed={tool === item.tool}
+                // 拖拽和选择互斥：手型工具在用时，文字选择不再算激活。
+                className={`tool reader-tool${tool === item.tool && !pan ? ' is-active' : ''}`}
+                aria-pressed={tool === item.tool && !pan}
                 title={item.title}
                 onClick={() => choose(item.tool)}
               >

@@ -12,7 +12,17 @@ import {
 import { TextLayer } from 'pdfjs-dist'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 import { cachedPdf, loadPdf } from '../lib/pdf'
-import { locateQuoteRects, pageElementOf, pageTextSelection } from '../lib/textLayer'
+import {
+  lineTargets,
+  locateQuoteRects,
+  pageElementOf,
+  pageTextSelection,
+  setTextSelection,
+  snapSelectionToLine,
+  textTargetAt,
+  wordTargets,
+  type TextTarget
+} from '../lib/textLayer'
 import type { FileRec, Rect } from '../types'
 // >>> integration:course-reading-annotation
 import type { Point, ShapeGeometry } from '../shared/contracts/content'
@@ -60,6 +70,8 @@ interface Props {
   focusQuote: { page: number; quote: string; nonce: number } | null
   searchTerm?: string
   tool: ReaderTool
+  /** Hand tool: a left drag pans the page instead of selecting text. */
+  panMode?: boolean
   overlay?: (view: { page: number; rotation: Rotation; width: number; height: number }) => ReactNode
   scrollRestore?: { ratio: number; nonce: number } | null
   onSelect: (payload: PdfSelectPayload) => void
@@ -103,6 +115,30 @@ function scaleFor (info: PageInfo, hostWidth: number, zoom: number): number {
   return Math.max(0.35, (hostWidth - 64) / info.width) * zoom
 }
 
+/** Where the viewport centre sits inside a page, as fractions of the page box. */
+function centreAnchor (
+  host: HTMLDivElement,
+  hostBox: DOMRect,
+  page: number,
+  element: HTMLElement
+): { page: number; ratioX: number; ratioY: number } {
+  const box = element.getBoundingClientRect()
+  const left = box.left - hostBox.left + host.scrollLeft
+  const top = box.top - hostBox.top + host.scrollTop
+  return {
+    page,
+    ratioX: (host.scrollLeft + host.clientWidth / 2 - left) / (box.width || 1),
+    ratioY: (host.scrollTop + host.clientHeight / 2 - top) / (box.height || 1)
+  }
+}
+
+/** Pointer travel below this is a click, not a drag. */
+const CLICK_SLOP = 10
+
+/** A press starts selecting once it travels this far; below CLICK_SLOP, so a
+ *  drag reacts at once while a click still commits nothing. */
+const SELECT_SLOP = 3
+
 /** Three pages keep a canvas at a time; cap each bitmap so zoom cannot exhaust memory. */
 const MAX_CANVAS_PIXELS = 12_000_000
 
@@ -119,6 +155,7 @@ export function PdfViewer ({
   focusQuote,
   searchTerm,
   tool,
+  panMode = false,
   overlay,
   scrollRestore,
   onSelect,
@@ -148,10 +185,27 @@ export function PdfViewer ({
   layoutRef.current = { hostWidth, zoom }
   const pageEls = useRef(new Map<number, HTMLDivElement>())
   const readyRef = useRef(new Set<number>())
-  const anchorRef = useRef<{ page: number; delta: number } | null>(null)
+  const anchorRef = useRef<{ page: number; ratioX: number; ratioY: number } | null>(null)
   const placedRef = useRef(false)
   const restoredRef = useRef(0)
   const frameRef = useRef(0)
+  /** Where the press landed: used for the click/drag decision and margin snapping. */
+  const downPointRef = useRef<{ x: number; y: number } | null>(null)
+  /** Drag selection owned by the viewer, so Chromium cannot snap it to whole lines. */
+  const selectDragRef = useRef<{ anchor: TextTarget; page: HTMLElement; fixed?: boolean } | null>(null)
+  const dragCommittedRef = useRef(false)
+  /** Click count for double/triple click word and line selection. */
+  const lastClickRef = useRef<{ time: number; x: number; y: number; clicks: number } | null>(null)
+  /** Latest pointer position while a drag selection is active. */
+  const dragPointRef = useRef<{ x: number; y: number } | null>(null)
+  const dragApplyingRef = useRef(false)
+  /** Set once the press has travelled far enough to count as a drag. */
+  const dragMovedRef = useRef(false)
+  /** Pan in flight: pointer start plus the scroll offset it began at. */
+  const panRef = useRef<{ x: number; y: number; left: number; top: number } | null>(null)
+  const spaceRef = useRef(false)
+  const [panning, setPanning] = useState(false)
+  const [handMode, setHandMode] = useState(false)
 
   const callbacks = useRef({ onSelect, onAnnotationClick, onRegion, onViewState, onScrollRatio, onVisiblePage })
   callbacks.current = { onSelect, onAnnotationClick, onRegion, onViewState, onScrollRatio, onVisiblePage }
@@ -225,7 +279,7 @@ export function PdfViewer ({
 
     const anchorElement = pageEls.current.get(found)
     if (anchorElement) {
-      anchorRef.current = { page: found, delta: anchorElement.getBoundingClientRect().top - hostBox.top }
+      anchorRef.current = centreAnchor(host, hostBox, found, anchorElement)
     }
     if (found !== currentRef.current) {
       currentRef.current = found
@@ -239,12 +293,10 @@ export function PdfViewer ({
     const host = hostRef.current
     const element = pageEls.current.get(target)
     if (!host || !element) return false
-    const top = element.getBoundingClientRect().top - host.getBoundingClientRect().top + host.scrollTop
+    const hostBox = host.getBoundingClientRect()
+    const top = element.getBoundingClientRect().top - hostBox.top + host.scrollTop
     host.scrollTop = Math.max(0, top - PAGE_TOP_MARGIN)
-    anchorRef.current = {
-      page: target,
-      delta: element.getBoundingClientRect().top - host.getBoundingClientRect().top
-    }
+    anchorRef.current = centreAnchor(host, hostBox, target, element)
     activate(target)
     return true
   }, [activate])
@@ -330,7 +382,9 @@ export function PdfViewer ({
   useEffect(() => {
     if (placedRef.current || !infos.length) return
     placedRef.current = page <= 1 ? true : scrollToPage(page)
-  }, [infos.length, page, scrollToPage])
+    // Record the viewport centre so the first zoom keeps it.
+    measure()
+  }, [infos.length, page, scrollToPage, measure])
 
   // A page coming from outside the viewer (page input, annotation, citation).
   useEffect(() => {
@@ -345,21 +399,58 @@ export function PdfViewer ({
     scrollToRatio(scrollRestore.ratio)
   }, [scrollRestore, infos.length, scrollToRatio])
 
-  // Keep the same spot in view when the zoom or the pane width changes.
+  // Zoom around the viewport centre: the page point under it stays put.
   useLayoutEffect(() => {
     const host = hostRef.current
     const anchor = anchorRef.current
     if (!host || !anchor) return
     const element = pageEls.current.get(anchor.page)
     if (!element) return
-    const top = element.getBoundingClientRect().top - host.getBoundingClientRect().top + host.scrollTop
-    // `delta` is the page's offset from the top of the viewport; keep it.
-    host.scrollTop = Math.max(0, top - anchor.delta)
+    const hostBox = host.getBoundingClientRect()
+    const box = element.getBoundingClientRect()
+    const left = box.left - hostBox.left + host.scrollLeft
+    const top = box.top - hostBox.top + host.scrollTop
+    host.scrollTop = Math.max(0, top + anchor.ratioY * box.height - host.clientHeight / 2)
+    host.scrollLeft = Math.max(0, left + anchor.ratioX * box.width - host.clientWidth / 2)
     measure()
   }, [zoom, hostWidth, infos.length, measure])
 
   useEffect(() => () => {
     if (frameRef.current) cancelAnimationFrame(frameRef.current)
+  }, [])
+
+  // Space is the hand-tool modifier: with it held, a left drag pans even over text.
+  useEffect(() => {
+    const typing = (target: EventTarget | null) => {
+      const element = target as HTMLElement | null
+      if (!element) return false
+      if (element.isContentEditable) return true
+      if (/^(INPUT|TEXTAREA|SELECT|BUTTON|A|SUMMARY)$/.test(element.tagName)) return true
+      return Boolean(element.closest?.('button, a, [role="button"], [contenteditable="true"]'))
+    }
+    const down = (event: KeyboardEvent) => {
+      if (event.code !== 'Space' || event.repeat || typing(event.target)) return
+      event.preventDefault()
+      spaceRef.current = true
+      setHandMode(true)
+    }
+    const up = (event: KeyboardEvent) => {
+      if (event.code !== 'Space') return
+      spaceRef.current = false
+      setHandMode(false)
+    }
+    const blur = () => {
+      spaceRef.current = false
+      setHandMode(false)
+    }
+    window.addEventListener('keydown', down)
+    window.addEventListener('keyup', up)
+    window.addEventListener('blur', blur)
+    return () => {
+      window.removeEventListener('keydown', down)
+      window.removeEventListener('keyup', up)
+      window.removeEventListener('blur', blur)
+    }
   }, [])
 
   const handleScroll = () => {
@@ -371,8 +462,33 @@ export function PdfViewer ({
   }
 
   // >>> integration:course-reading-annotation
+  /** Read the current selection (or the annotation under the pointer) and report it. */
+  const commitSelection = (pageElement: HTMLElement, clientX: number, clientY: number) => {
+    const targetPage = Number(pageElement.dataset.pdfPage)
+    if (!Number.isFinite(targetPage)) return
+    const picked = pageTextSelection(pageElement)
+    if (picked) {
+      callbacks.current.onSelect({ ...picked, x: clientX, y: clientY })
+      return
+    }
+    const info = infoByPage.current.get(targetPage)
+    if (!info) return
+    callbacks.current.onAnnotationClick({
+      point: pointFromClient(pageElement.getBoundingClientRect(), clientX, clientY),
+      page: targetPage,
+      rotation: info.rotation,
+      x: clientX,
+      y: clientY
+    })
+  }
+
   const handleMouseUp = (event: ReactMouseEvent<HTMLDivElement>) => {
     if (regionTool) return
+    // A drag owned by the viewer already committed on pointerup.
+    if (dragCommittedRef.current) {
+      dragCommittedRef.current = false
+      return
+    }
     const target = event.target instanceof Element ? event.target : null
     if (!target || !target.closest('.pdf-page')) return
     const selection = window.getSelection()
@@ -384,39 +500,165 @@ export function PdfViewer ({
     const targetPage = Number(pageElement.dataset.pdfPage)
     if (!Number.isFinite(targetPage)) return
     activate(targetPage)
-    if (hasSelection) {
-      const picked = pageTextSelection(pageElement)
-      if (picked) {
-        callbacks.current.onSelect({ ...picked, x: event.clientX, y: event.clientY })
-        return
+    if (hasSelection && selection) {
+      // A range that left the text resolves to a position in the middle of the
+      // flat layer; snap it onto the line under the pointer before reading it.
+      const range = selection.getRangeAt(0)
+      const focus = { x: event.clientX, y: event.clientY }
+      const anchor = downPointRef.current ?? focus
+      if (snapSelectionToLine(pageElement, range, anchor, focus)) {
+        selection.removeAllRanges()
+        selection.addRange(range)
       }
     }
-    const info = infoByPage.current.get(targetPage)
-    if (!info) return
-    callbacks.current.onAnnotationClick({
-      point: pointFromClient(pageElement.getBoundingClientRect(), event.clientX, event.clientY),
-      page: targetPage,
-      rotation: info.rotation,
+    commitSelection(pageElement, event.clientX, event.clientY)
+  }
+
+  /** True once the page is wider than the viewport, i.e. there is horizontal
+   *  slack to pan. Vertical overflow is ordinary page scrolling. */
+  const canPan = () => {
+    const host = hostRef.current
+    if (!host) return false
+    return host.scrollWidth - host.clientWidth > 1
+  }
+
+  const startPan = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const host = hostRef.current
+    if (!host) return false
+    selectDragRef.current = null
+    setDrag(null)
+    panRef.current = {
       x: event.clientX,
-      y: event.clientY
-    })
+      y: event.clientY,
+      left: host.scrollLeft,
+      top: host.scrollTop
+    }
+    setPanning(true)
+    event.preventDefault()
+    event.currentTarget.setPointerCapture(event.pointerId)
+    return true
   }
 
   const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!regionTool) return
+    downPointRef.current = { x: event.clientX, y: event.clientY }
+    dragCommittedRef.current = false
+    selectDragRef.current = null
     const target = event.target instanceof Element ? event.target : null
-    const pageElement = target?.closest<HTMLElement>('[data-pdf-page]')
-    if (!pageElement) return
-    const targetPage = Number(pageElement.dataset.pdfPage)
-    if (!Number.isFinite(targetPage)) return
+    const pageElement = target?.closest<HTMLElement>('[data-pdf-page]') ?? null
+
+    // Pan first, so the hand tool also works while a region tool is armed:
+    // middle button, or left button with space held, pans anywhere. Plain
+    // left-drags on blank paper pan too (below).
+    if (
+      event.pointerType !== 'touch' &&
+      (event.button === 1 || (event.button === 0 && (panMode || spaceRef.current)))
+    ) {
+      if (startPan(event)) return
+    }
+
+    if (regionTool) {
+      if (!pageElement) return
+      const targetPage = Number(pageElement.dataset.pdfPage)
+      if (!Number.isFinite(targetPage)) return
+      event.preventDefault()
+      activate(targetPage)
+      const point = pointFromClient(pageElement.getBoundingClientRect(), event.clientX, event.clientY)
+      setDrag({ page: targetPage, start: point, current: point, points: [point] })
+      event.currentTarget.setPointerCapture(event.pointerId)
+      return
+    }
+
+    // The viewer owns drag selection: on absolutely positioned spans the browser
+    // snaps to whole line boxes and flips direction across gaps. Shift-clicks and
+    // touch keep native behaviour.
+    if (!pageElement) {
+      // The gutter between pages is blank paper: drag it to pan once the page
+      // overflows, otherwise leave the press to the browser.
+      if (canPan()) startPan(event)
+      return
+    }
+    const point = { x: event.clientX, y: event.clientY }
+    dragPointRef.current = point
+    dragMovedRef.current = false
+    const now = Date.now()
+    const last = lastClickRef.current
+    const repeat = Boolean(last && now - last.time < 450 && Math.abs(last.x - point.x) <= 4 && Math.abs(last.y - point.y) <= 4)
+    const clicks = repeat && last ? last.clicks + 1 : 1
+    lastClickRef.current = { time: now, x: point.x, y: point.y, clicks }
+    const anchor = textTargetAt(pageElement, point)
+    if (!anchor) {
+      // No text under the press: drop any earlier selection so the click cannot
+      // reuse it.
+      window.getSelection()?.removeAllRanges()
+      // Zoomed in, blank paper is where the page gets grabbed.
+      if (canPan()) startPan(event)
+      return
+    }
     event.preventDefault()
-    activate(targetPage)
-    const point = pointFromClient(pageElement.getBoundingClientRect(), event.clientX, event.clientY)
-    setDrag({ page: targetPage, start: point, current: point, points: [point] })
     event.currentTarget.setPointerCapture(event.pointerId)
+    if (clicks >= 2) {
+      const range = clicks >= 3 ? lineTargets(anchor) : wordTargets(anchor)
+      setTextSelection(range.start, range.end)
+      selectDragRef.current = { anchor: range.start, page: pageElement, fixed: true }
+      return
+    }
+    selectDragRef.current = { anchor, page: pageElement }
+    window.getSelection()?.removeAllRanges()
   }
 
+  /** Rebuild the drag selection from the anchor and the latest pointer position. */
+  const applyDragSelection = useCallback(() => {
+    const selectDrag = selectDragRef.current
+    const point = dragPointRef.current
+    if (!selectDrag || !point || dragApplyingRef.current) return
+    const focus = textTargetAt(selectDrag.page, point)
+    if (!focus) return
+    const selection = window.getSelection()
+    if (selection && selection.rangeCount === 1) {
+      const current = selection.getRangeAt(0)
+      const desired = document.createRange()
+      try {
+        desired.setStart(selectDrag.anchor.node, selectDrag.anchor.offset)
+        desired.setEnd(focus.node, focus.offset)
+      } catch {
+        desired.setStart(focus.node, focus.offset)
+        desired.setEnd(selectDrag.anchor.node, selectDrag.anchor.offset)
+      }
+      if (
+        current.startContainer === desired.startContainer &&
+        current.startOffset === desired.startOffset &&
+        current.endContainer === desired.endContainer &&
+        current.endOffset === desired.endOffset
+      ) return
+    }
+    dragApplyingRef.current = true
+    setTextSelection(selectDrag.anchor, focus)
+    dragApplyingRef.current = false
+  }, [])
+
   const handlePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const pan = panRef.current
+    if (pan) {
+      const host = hostRef.current
+      if (!host) return
+      host.scrollLeft = pan.left - (event.clientX - pan.x)
+      host.scrollTop = pan.top - (event.clientY - pan.y)
+      return
+    }
+    const selectDrag = selectDragRef.current
+    if (selectDrag) {
+      if (!selectDrag.fixed) {
+        const point = { x: event.clientX, y: event.clientY }
+        dragPointRef.current = point
+        if (!dragMovedRef.current) {
+          const start = downPointRef.current
+          if (start && Math.hypot(point.x - start.x, point.y - start.y) < SELECT_SLOP) return
+          dragMovedRef.current = true
+        }
+        applyDragSelection()
+      }
+      return
+    }
     if (!drag) return
     const element = pageEls.current.get(drag.page)
     if (!element) return
@@ -432,6 +674,38 @@ export function PdfViewer ({
   }
 
   const handlePointerUp = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (panRef.current) {
+      panRef.current = null
+      setPanning(false)
+      dragCommittedRef.current = true
+      return
+    }
+    const selectDrag = selectDragRef.current
+    if (selectDrag && !selectDrag.fixed) {
+      const point = { x: event.clientX, y: event.clientY }
+      const start = downPointRef.current
+      dragPointRef.current = point
+      selectDragRef.current = null
+      dragCommittedRef.current = true
+      if (!start || Math.hypot(point.x - start.x, point.y - start.y) < CLICK_SLOP) {
+        // A click: drop the previewed range, then only look for an annotation
+        // under the pointer.
+        window.getSelection()?.removeAllRanges()
+        commitSelection(selectDrag.page, point.x, point.y)
+        return
+      }
+      applyDragSelection()
+      // A drag reports text only; its end point is not a click on an annotation.
+      const picked = pageTextSelection(selectDrag.page)
+      if (picked) callbacks.current.onSelect({ ...picked, x: point.x, y: point.y })
+      return
+    }
+    if (selectDrag) {
+      selectDragRef.current = null
+      dragCommittedRef.current = true
+      commitSelection(selectDrag.page, event.clientX, event.clientY)
+      return
+    }
     if (!drag) return
     const element = pageEls.current.get(drag.page)
     const info = infoByPage.current.get(drag.page)
@@ -482,14 +756,18 @@ export function PdfViewer ({
 
   return (
     <div
-      className="pdf-stage"
+      className={`pdf-stage${panning ? ' is-panning' : handMode || panMode ? ' is-hand' : ''}`}
       ref={hostRef}
       onScroll={handleScroll}
       onMouseUp={handleMouseUp}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
-      onPointerCancel={() => setDrag(null)}
+      onPointerCancel={() => {
+        panRef.current = null
+        setPanning(false)
+        setDrag(null)
+      }}
     >
       {infos.length ? (
         <div className="pdf-stack">

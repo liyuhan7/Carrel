@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   DEFAULT_ACTIVE_MODEL, PRESETS, activeRoute, adoptSaved, authReady, connectionFromPreset,
-  describeModel, enabledModels, mergeDiscovered, modelOptions, routeOf
+  describeModel, enabledModels, mergeDiscovered, modelOptions, modelRows, reconcileEnabled, routeOf
 } from '../src/lib/providers.ts'
 
 const presetWithModels = PRESETS.find((preset) => preset.protocol !== 'demo' && preset.models.length)
@@ -155,4 +155,56 @@ test('a model that needs another protocol routes to it', () => {
   const route = routeOf(connection, describeModel(connection, model.id))
   assert.equal(route.protocol, model.protocol)
   assert.equal(route.modelId, model.apiModelId ?? model.id)
+})
+
+test('a pulled model id maps back to catalog metadata through its wire id', () => {
+  const preset = PRESETS.find((item) => item.models.some((model) => model.apiModelId && model.apiModelId !== model.id))
+  assert.ok(preset, 'a catalog model is served under a different id')
+  const model = preset.models.find((item) => item.apiModelId && item.apiModelId !== item.id)
+  const connection = connectionFromPreset(preset)
+  const [merged] = mergeDiscovered(connection, [{ id: model.apiModelId }])
+  assert.equal(merged.modelId, model.apiModelId)
+  assert.equal(merged.apiModelId, model.apiModelId)
+  assert.equal(merged.protocol, model.protocol)
+  assert.equal(merged.contextWindow, model.contextWindow)
+  assert.equal(merged.provenance, 'preset')
+})
+
+test('a pulled list replaces the bundled snapshot in the model picker', () => {
+  const preset = PRESETS.find((item) => item.id === 'opencode')
+  const connection = { ...connectionFromPreset(preset), enabledModelIds: [] }
+  assert.ok(modelRows(connection).length > 0, 'the compact catalog fills the list before any pull')
+  const refreshed = {
+    ...connection,
+    models: mergeDiscovered(connection, [{ id: 'deepseek-v4.1-flash' }, { id: 'kimi-k3' }])
+  }
+  assert.deepEqual(modelRows(refreshed).map((row) => row.modelId), ['deepseek-v4.1-flash', 'kimi-k3'])
+})
+
+test('refreshing drops picks the provider no longer serves', () => {
+  const connection = {
+    id: 'opencode',
+    presetId: 'opencode',
+    name: 'OpenCode Go',
+    protocol: 'openai-chat',
+    baseUrl: 'https://opencode.ai/zen/go/v1',
+    authMethod: 'api-key',
+    enabledModelIds: ['deepseek-flash', 'glm-5.2'],
+    defaultModelId: 'deepseek-flash'
+  }
+  const models = mergeDiscovered(connection, [{ id: 'glm-5.2' }, { id: 'kimi-k3' }])
+  assert.deepEqual(reconcileEnabled(connection, models), {
+    enabledModelIds: ['glm-5.2'],
+    defaultModelId: 'glm-5.2'
+  })
+  const aliased = { ...connection, enabledModelIds: ['deepseek-v4-1-flash'], defaultModelId: 'deepseek-v4-1-flash' }
+  const served = mergeDiscovered(connection, [{ id: 'deepseek-v4.1-flash' }])
+  assert.deepEqual(reconcileEnabled(aliased, served), {
+    enabledModelIds: ['deepseek-v4.1-flash'],
+    defaultModelId: 'deepseek-v4.1-flash'
+  })
+  assert.deepEqual(reconcileEnabled(connection, models.slice(1)), {
+    enabledModelIds: ['kimi-k3'],
+    defaultModelId: 'kimi-k3'
+  })
 })

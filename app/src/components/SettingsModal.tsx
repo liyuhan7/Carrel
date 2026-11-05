@@ -96,6 +96,10 @@ export function SettingsModal () {
     setCopilot(null)
     if (pollTimer.current) clearInterval(pollTimer.current)
     if (preset?.sources?.length) void detectSources(preset.sources).then(setDetections)
+    // A configured provider's own list outranks the bundled snapshot, so pull it once.
+    if (preset?.modelList === 'api' && connection.hasKey && !connection.models?.length) {
+      void refreshModels(connection.id, true)
+    }
     return () => {
       if (pollTimer.current) clearInterval(pollTimer.current)
     }

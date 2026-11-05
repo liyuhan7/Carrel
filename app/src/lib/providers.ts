@@ -78,8 +78,13 @@ export function presetOf (connection: ProviderConnection): ProviderPreset | unde
     (connection.presetId === CUSTOM_PRESET_ID ? CUSTOM_PRESET : undefined)
 }
 
+/** Catalog entry for an id: either the catalog's own id or the id the provider actually serves. */
+function presetModel (connection: ProviderConnection, modelId: string): ModelPreset | undefined {
+  return presetOf(connection)?.models.find((model) => model.id === modelId || model.apiModelId === modelId)
+}
+
 export function describeModel (connection: ProviderConnection, modelId: string): ModelDescriptor {
-  const preset: ModelPreset | undefined = presetOf(connection)?.models.find((model) => model.id === modelId)
+  const preset = presetModel(connection, modelId)
   const cached = connection.models?.find((model) => model.modelId === modelId)
   return {
     connectionId: connection.id,
@@ -98,7 +103,10 @@ export function enabledModels (connection: ProviderConnection): ModelDescriptor[
   return connection.enabledModelIds.filter(Boolean).map((modelId) => describeModel(connection, modelId))
 }
 
-/** Preset catalog plus whatever the provider's list endpoint returned, preset metadata first. */
+/**
+ * Rows for the model picker. Once a provider's own list has been pulled it wins:
+ * the bundled catalog is a snapshot, and services retire models it still lists.
+ */
 export function modelRows (connection: ProviderConnection): ModelDescriptor[] {
   const rows: ModelDescriptor[] = []
   const seen = new Set<string>()
@@ -107,15 +115,18 @@ export function modelRows (connection: ProviderConnection): ModelDescriptor[] {
     seen.add(model.modelId)
     rows.push(model)
   }
-  for (const model of presetOf(connection)?.models ?? []) push(describeModel(connection, model.id))
-  for (const model of connection.models ?? []) push(describeModel(connection, model.modelId))
+  if (connection.models?.length) {
+    for (const model of connection.models) push(model)
+  } else {
+    for (const model of presetOf(connection)?.models ?? []) push(describeModel(connection, model.id))
+  }
   for (const modelId of connection.enabledModelIds) push(describeModel(connection, modelId))
   return rows
 }
 
 export function mergeDiscovered (connection: ProviderConnection, remote: RemoteModel[]): ModelDescriptor[] {
   return remote.map((item) => {
-    const preset = presetOf(connection)?.models.find((model) => model.id === item.id)
+    const preset = presetModel(connection, item.id)
     return {
       connectionId: connection.id,
       modelId: item.id,
@@ -128,6 +139,33 @@ export function mergeDiscovered (connection: ProviderConnection, remote: RemoteM
       provenance: preset ? 'preset' : 'discovered'
     }
   })
+}
+
+/**
+ * Keeps the user's picks that the provider still serves, rewriting catalog ids to the
+ * ids the provider answers to; falls back to the first few when nothing survives.
+ */
+export function reconcileEnabled (
+  connection: ProviderConnection,
+  models: ModelDescriptor[]
+): { enabledModelIds: string[], defaultModelId?: string } {
+  const served = new Map<string, string>()
+  for (const model of models) {
+    served.set(model.modelId, model.modelId)
+    if (model.apiModelId) served.set(model.apiModelId, model.modelId)
+  }
+  const kept: string[] = []
+  for (const modelId of connection.enabledModelIds) {
+    // A saved pick may be a catalog id whose wire id is what the provider serves.
+    const id = served.get(modelId) ?? served.get(presetModel(connection, modelId)?.apiModelId ?? '')
+    if (id && !kept.includes(id)) kept.push(id)
+  }
+  const enabledModelIds = kept.length ? kept : models.slice(0, 3).map((model) => model.modelId)
+  const current = connection.defaultModelId ? served.get(connection.defaultModelId) : undefined
+  return {
+    enabledModelIds,
+    defaultModelId: current ?? enabledModelIds[0]
+  }
 }
 
 export interface ModelOption {

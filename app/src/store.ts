@@ -20,7 +20,8 @@ import type { ReadingStatePatch } from './reader/readingState'
 // <<< integration:course-reading-annotation
 import {
   CUSTOM_PRESET, CUSTOM_PRESET_ID, DEFAULT_ACTIVE_MODEL, DEFAULT_CONNECTIONS,
-  activeRoute, adoptSaved, authReady, connectionFromPreset, mergeDiscovered, presetOf, routeOf, supportsImage
+  activeRoute, adoptSaved, authReady, connectionFromPreset, mergeDiscovered, presetOf,
+  reconcileEnabled, routeOf, supportsImage
 } from './lib/providers'
 import { extractPageTexts, dropPdf, loadPdf, renderPageImage, type PageImage } from './lib/pdf'
 import { parseAnswer } from './lib/verify'
@@ -163,7 +164,7 @@ interface Store extends PersistedState {
   refreshSubscription: (id: string) => Promise<void>
   copilotBegin: () => Promise<DeviceCode>
   copilotPoll: (id: string, deviceCode: string) => Promise<{ status: 'pending' | 'ok' | 'error'; message?: string }>
-  refreshModels: (id: string) => Promise<void>
+  refreshModels: (id: string, quiet?: boolean) => Promise<void>
   setAttachPageImage: (value: boolean) => void
 
   startRewrite: (input: { noteId: string; start: number; end: number; text: string; instruction: string }) => Promise<void>
@@ -572,6 +573,13 @@ export const useStore = create<Store>((set, get) => {
         }
       })
       // <<< integration:note-capture-editing
+      // Configurations saved before their provider list was ever pulled still point at
+      // catalog ids; one pull replaces them with what the provider actually serves.
+      const active = activeRoute(get().connections, get().activeModel)
+      if (active && presetOf(active.connection)?.modelList === 'api' &&
+        active.connection.hasKey && !active.connection.models?.length) {
+        void get().refreshModels(active.connection.id, true)
+      }
     },
 
     setView: (view) => set({ view }),
@@ -1266,6 +1274,8 @@ export const useStore = create<Store>((set, get) => {
     saveKey: async (id, key) => {
       await window.cs.setKey(id, key)
       set((s) => ({ connections: s.connections.map((c) => (c.id === id ? { ...c, hasKey: true } : c)) }))
+      const connection = get().connections.find((c) => c.id === id)
+      if (connection && presetOf(connection)?.modelList === 'api') await get().refreshModels(id, true)
     },
 
     clearKey: async (id) => {
@@ -1340,11 +1350,11 @@ export const useStore = create<Store>((set, get) => {
       return result
     },
 
-    refreshModels: async (id) => {
+    refreshModels: async (id, quiet = false) => {
       const connection = get().connections.find((c) => c.id === id)
       if (!connection) return
       if (presetOf(connection)?.modelList === 'registry') {
-        get().notify('该服务不提供模型列表，使用内置目录', 'error')
+        if (!quiet) get().notify('该服务不提供模型列表，使用内置目录', 'error')
         return
       }
       const result = await window.cs.listModels({
@@ -1355,24 +1365,25 @@ export const useStore = create<Store>((set, get) => {
         projectId: connection.oauthProjectId
       })
       if (!result.ok) {
-        get().notify(result.message, 'error')
+        if (!quiet) get().notify(result.message, 'error')
         return
       }
       const models = mergeDiscovered(connection, result.models)
-      const enabled = connection.enabledModelIds.length
-        ? connection.enabledModelIds
-        : models.slice(0, 3).map((model) => model.modelId)
-      set((s) => ({
-        connections: s.connections.map((c) => (c.id === id
-          ? {
-              ...c,
-              models,
-              modelsFetchedAt: Date.now(),
-              enabledModelIds: enabled,
-              defaultModelId: c.defaultModelId ?? enabled[0]
-            }
+      const picked = reconcileEnabled(connection, models)
+      set((s) => {
+        const connections = s.connections.map((c) => (c.id === id
+          ? { ...c, models, modelsFetchedAt: Date.now(), ...picked }
           : c))
-      }))
+        // The active pick may have been a retired model; follow the reconciled default.
+        const retired = s.activeModel.connectionId === id &&
+          !picked.enabledModelIds.includes(s.activeModel.modelId)
+        return {
+          connections,
+          activeModel: retired && picked.defaultModelId
+            ? { connectionId: id, modelId: picked.defaultModelId }
+            : s.activeModel
+        }
+      })
       persist()
       get().notify(result.message)
     },

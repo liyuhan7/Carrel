@@ -3,6 +3,7 @@
 
 import type { CapturePlacement, NoteBlock, NoteSourceCandidate, WritingPosition } from './contracts'
 import { placementFromPosition } from './placement.ts'
+import { stripCiteLines } from '../lib/verify.ts'
 
 export interface CaptureSource {
   fileId: string
@@ -11,9 +12,9 @@ export interface CaptureSource {
   text: string
 }
 
-/** Removes the inline `[[pN]]` citation markers from an AI answer. */
+/** Removes the `@cite` ledger and the inline `[[pN]]` markers from an AI answer. */
 export function stripCiteMarkers (text: string): string {
-  return text.replace(/\[\[\s*p\s*\d+\s*\]\]/gi, '').replace(/\n{3,}/g, '\n\n').trim()
+  return stripCiteLines(text).replace(/\[\[\s*p\s*\d+\s*\]\]/gi, '').trim()
 }
 
 export function sourceLabel (fileName: string, page: number): string {

@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { normalize, parseAnswer, locateQuote } from '../src/lib/verify.ts'
+import { renderAnswer } from '../src/lib/markdown.ts'
 
 const pages = [
   '分组密码将明文划分为固定长度的数据块，在密钥控制下执行可逆变换。',
@@ -47,4 +48,27 @@ test('parseAnswer deduplicates repeated citations', () => {
 
 test('locateQuote ignores quotes that are too short to be evidence', () => {
   assert.equal(locateQuote('分组', pages), null)
+})
+
+test('parseAnswer reads the p-prefixed ledger form', () => {
+  const raw = '构造函数与类同名。[[p1]]\n\n@cite p1 | 分组密码将明文划分为固定长度的数据块'
+  const parsed = parseAnswer(raw, pages)
+  assert.equal(parsed.citations.length, 1)
+  assert.equal(parsed.citations[0].page, 1)
+  assert.equal(parsed.citations[0].verified, true)
+  assert.ok(!parsed.content.includes('@cite'))
+})
+
+test('parseAnswer hides a ledger line it cannot parse', () => {
+  const raw = '正文。[[p2]]\n\n@cite page two | 分组密码是一种对称密码体制'
+  const parsed = parseAnswer(raw, pages)
+  assert.equal(parsed.citations.length, 0)
+  assert.ok(!parsed.content.includes('@cite'))
+  assert.ok(!parsed.content.endsWith('\n'))
+})
+
+test('renderAnswer keeps inline page chips and drops the ledger', () => {
+  const html = renderAnswer('见第 9 页。[[p9]]\n\n@cite p9 | 分组密码')
+  assert.ok(html.includes('第 9 页'))
+  assert.ok(!html.includes('@cite'))
 })

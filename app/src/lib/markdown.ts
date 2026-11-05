@@ -1,5 +1,6 @@
 import MarkdownIt from 'markdown-it'
 import type { Citation } from '../types'
+import { stripCiteLines } from './verify.ts'
 
 export const md = new MarkdownIt({ html: false, linkify: true, breaks: true })
 
@@ -41,7 +42,7 @@ function chip (page: number, citation: Citation | undefined): string {
 }
 
 export function renderAnswer (text: string, citations: Citation[] = []): string {
-  const html = md.render(text)
+  const html = md.render(stripCiteLines(text))
   return html.replace(/\[\[\s*p\s*(\d+)\s*\]\]/gi, (_match, raw) => {
     const page = Number(raw)
     return chip(page, citations.find((c) => c.page === page))

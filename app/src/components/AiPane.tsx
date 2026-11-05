@@ -367,7 +367,7 @@ function Message ({ message }: { message: ChatMessage }) {
             type="button"
             className="link"
             onClick={() => {
-              void navigator.clipboard.writeText(message.content.replace(/\[\[\s*p\s*\d+\s*\]\]/gi, ''))
+              void navigator.clipboard.writeText(stripCiteMarkers(message.content))
               notify('已复制回答')
             }}
           >

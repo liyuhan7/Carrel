@@ -18,7 +18,13 @@ export interface ParsedAnswer {
   citations: Citation[]
 }
 
-const CITE_LINE = /^[ \t]*@cite[ \t]+(\d+)[ \t]*[|｜][ \t]*(.+?)[ \t]*$/gim
+// The model reports pages as `@cite 3 | …` but also as `@cite p3 | …`; the page
+// prefix and an optional list bullet stay optional so both forms verify.
+const CITE_LINE = /^[ \t]*(?:[-*+][ \t]+)?@cite[ \t]+(?:第[ \t]*)?[pP]?[ \t]*(\d+)[ \t]*页?[ \t]*[|｜][ \t]*(.+?)[ \t]*$/gim
+
+// Any line that opens with `@cite` is ledger, parsed or not: the reader never
+// sees these lines, so a malformed one cannot leak into the answer.
+const CITE_ANY_LINE = /^[ \t]*(?:[-*+][ \t]+|>[ \t]*)*@cite\b[^\n]*$/gim
 
 export function parseAnswer (raw: string, pages: string[]): ParsedAnswer {
   const citations: Citation[] = []
@@ -41,13 +47,19 @@ export function parseAnswer (raw: string, pages: string[]): ParsedAnswer {
     })
   }
 
-  const content = raw
-    .replace(CITE_LINE, '')
+  const content = stripCiteLines(raw)
     .replace(/^[ \t]*(引用原文|来源清单|参考来源|引用清单)[ \t]*[:：]?[ \t]*$/gim, '')
-    .replace(/\n{3,}/g, '\n\n')
     .trim()
 
   return { content, citations }
+}
+
+/** Drops the `@cite` ledger lines along with the blank lines they leave behind. */
+export function stripCiteLines (text: string): string {
+  return text
+    .replace(CITE_ANY_LINE, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
 }
 
 /** Find the page that actually contains the quote. Cited page wins ties. */

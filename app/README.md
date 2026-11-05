@@ -20,7 +20,7 @@ Electron 主进程 + React 渲染层的本地优先桌面应用。界面只负�
 1. `store.sendQuestion` 用当前资料、页码、选区拼上下文（`buildContext`），视觉模型可选附带页面截图。
 2. `window.cs.startAI(reqId, payload)` → 主进程 `ai:start`：按 `ModelRoute` 取凭证，交给 `ai.mjs`。
 3. `ai.mjs` 用 AI SDK 的 `streamText` 请求；增量走 `ai:delta`，结束 `ai:done`，异常 `ai:error`。
-4. 渲染层把整段文本交给 `parseAnswer`：抽 `@cite` 行，用 `locateQuote` 在已提取的页面文本里逐字比对；通过则标为已验证并记录页码，失败标为「未核实」。
+4. 渲染层把整段文本交给 `parseAnswer`：抽走 `@cite` 行（页码写成 `p3` 或 `3` 都认），用 `locateQuote` 在已提取的页面文本里逐字比对；找到则标为已验证并记录页码，找不到标为「未核实」。`@cite` 行属于台账，不进回答正文，复制和整理到笔记时也不会带出。
 5. 消息、引用与阅读位置随状态持久化：写入防抖，关闭前补一次 flush。
 
 ## 阅读与定位
@@ -46,7 +46,7 @@ Electron 主进程 + React 渲染层的本地优先桌面应用。界面只负�
 - 协议：OpenAI 兼容、OpenAI Responses、Anthropic Messages、Google Gemini。部分服务在一个 provider 内混用协议，`ModelPreset.protocol` 覆盖连接级协议，`routeOf` 据此生成路由。
 - 凭证：API Key（safeStorage）、官方 OAuth（PKCE + 回环回调）、本机 CLI 导入（Claude Code / Codex / Grok Build，含续期与写回）、GitHub Copilot 设备码。
 - 请求头修正：Codex 走 ChatGPT 后端，带 `originator` / `version` / `chatgpt-account-id`，请求体 `store: false` 且 system 作为 `instructions`；OpenCode 带 `x-opencode-*` 会话头；Anthropic OAuth 带 `anthropic-beta`。
-- 模型发现：调服务商 `/models` 合并进目录，标记来源（目录 / 发现 / 手填）；`modelList: registry` 的服务跳过网络。
+- 模型发现：调服务商 `/models` 拉取真实模型列表，标记来源（目录 / 发现 / 手填）；`modelList: registry` 的服务跳过网络。拉取后的列表取代内置目录快照，已启用但服务端不再提供的模型自动剔除，目录 id 与线上 id 不同的模型按线上 id 归一。打开服务设置、保存密钥时若尚未拉过，以及启动时当前模型所属服务尚未拉过，都会自动拉取一次。
 - 联网搜索与工具调用不在请求链路上：`src/lib/search.ts` 只定义契约。
 
 ## 数据与安全

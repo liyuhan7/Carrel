@@ -39,13 +39,7 @@ npm run build && npm start
 
 1. 右上角「导入资料」选一份 PDF，进入学习空间。
 2. 在左侧选中一段文字，中间输入框会显示「针对第 N 页提问」，发送。
-3. 回答末尾带一行来源：
-
-   ```text
-   @cite 1 | Group ciphers divide plaintext into fixed-length blocks.
-   ```
-
-   这一行会被逐字核对；通过后变成可点的来源，点击回到该页并闪烁原文。
+3. 回答末尾带一行来源.
 4. 回答下方点「整理到笔记」，摘录连同 `csref` 锚点写进右侧笔记；点锚点回到原文。
 
 模块划分、请求链路与构建配置见 [app/README.md](app/README.md)。

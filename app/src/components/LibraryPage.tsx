@@ -4,6 +4,7 @@ import type { FileKind, FileRec, Note } from '../types'
 import { formatBytes, formatTime } from '../lib/format'
 import { TypeBadge } from './TypeBadge'
 import { FilePreview } from './FilePreview'
+import { CourseSelect, courseNameOf } from './CourseSelect'
 
 const TYPES: { id: 'all' | FileKind; label: string }[] = [
   { id: 'all', label: '全部' },
@@ -16,6 +17,7 @@ const TYPES: { id: 'all' | FileKind; label: string }[] = [
 export function LibraryPage () {
   const files = useStore((s) => s.files)
   const notes = useStore((s) => s.notes)
+  const courses = useStore((s) => s.courses)
   const resources = useStore((s) => s.resources)
   const anchors = useStore((s) => s.anchors)
   const links = useStore((s) => s.links)
@@ -27,18 +29,24 @@ export function LibraryPage () {
   const toggleFavorite = useStore((s) => s.toggleFavorite)
   const removeFile = useStore((s) => s.removeFile)
   const revealFile = useStore((s) => s.revealFile)
+  const setFileCourse = useStore((s) => s.setFileCourse)
 
   const [query, setQuery] = useState('')
   const [type, setType] = useState<'all' | FileKind>('all')
+  const [course, setCourse] = useState('all')
   const [sort, setSort] = useState<'opened' | 'name'>('opened')
   const [selectedId, setSelectedId] = useState<string | null>(null)
 
   const filtered = useMemo(() => {
     const keyword = query.trim().toLowerCase()
     return files
-      .filter((file) => (type === 'all' || file.kind === type) && (!keyword || file.name.toLowerCase().includes(keyword)))
+      .filter((file) =>
+        (type === 'all' || file.kind === type) &&
+        (course === 'all' || (course === 'unfiled' ? !file.courseId : file.courseId === course)) &&
+        (!keyword || file.name.toLowerCase().includes(keyword))
+      )
       .sort((a, b) => (sort === 'name' ? a.name.localeCompare(b.name, 'zh-CN') : b.lastOpenedAt - a.lastOpenedAt))
-  }, [files, query, type, sort])
+  }, [files, query, type, course, sort])
 
   const selected = filtered.find((file) => file.id === selectedId) ?? filtered[0] ?? null
 
@@ -76,7 +84,7 @@ export function LibraryPage () {
       <header className="page-head">
         <div>
           <p className="eyebrow">YOUR LIBRARY</p>
-          <h1>资料库</h1>
+          <h1>资料</h1>
         </div>
         <button type="button" className="btn btn-primary" onClick={() => void importDialog()}>
           导入资料
@@ -110,6 +118,19 @@ export function LibraryPage () {
                 </button>
               ))}
             </div>
+            <div className="chips" role="group" aria-label="按课程筛选">
+              <button type="button" aria-pressed={course === 'all'} onClick={() => setCourse('all')}>
+                全部课程
+              </button>
+              <button type="button" aria-pressed={course === 'unfiled'} onClick={() => setCourse('unfiled')}>
+                未归类
+              </button>
+              {courses.map((item) => (
+                <button key={item.id} type="button" title={item.name} aria-pressed={course === item.id} onClick={() => setCourse(item.id)}>
+                  {item.name}
+                </button>
+              ))}
+            </div>
             <select className="select" value={sort} onChange={(event) => setSort(event.target.value as 'opened' | 'name')} aria-label="排序方式">
               <option value="opened">最近打开</option>
               <option value="name">名称</option>
@@ -123,10 +144,11 @@ export function LibraryPage () {
           ) : (
             <div className="library-layout">
               <div className="library-list">
-                <table className="table">
+                <table className="table library-table">
                   <thead>
                     <tr>
                       <th scope="col">名称</th>
+                      <th scope="col">课程</th>
                       <th scope="col">类型</th>
                       <th scope="col" className="num">大小</th>
                       <th scope="col">最近打开</th>
@@ -147,6 +169,12 @@ export function LibraryPage () {
                             {file.missing ? <span className="flag is-error">文件缺失</span> : null}
                             {file.changed ? <span className="flag">已修改</span> : null}
                           </button>
+                        </td>
+                        <td>
+                          <CourseSelect
+                            value={file.courseId}
+                            onChange={(courseId) => setFileCourse(file.id, courseId)}
+                          />
                         </td>
                         <td className="muted">{file.ext.toUpperCase()}</td>
                         <td className="num muted">{formatBytes(file.size)}</td>
@@ -184,6 +212,7 @@ export function LibraryPage () {
                   </h2>
                   <dl className="detail-meta">
                     <div><dt>类型</dt><dd>{selected.ext.toUpperCase()}</dd></div>
+                    <div><dt>课程</dt><dd>{courseNameOf(selected.courseId, courses)}</dd></div>
                     <div><dt>大小</dt><dd>{formatBytes(selected.size)}</dd></div>
                     {selected.kind === 'pdf' ? (
                       <div><dt>页数</dt><dd>{selected.pageCount || 1}</dd></div>

@@ -8,10 +8,14 @@ import { NotePane } from './NotePane'
 export function Workspace () {
   const workspace = useStore((s) => s.workspace)
   const files = useStore((s) => s.files)
+  const courses = useStore((s) => s.courses)
+  const openCourse = useStore((s) => s.openCourse)
+  const setView = useStore((s) => s.setView)
   const saveStatus = useStore((s) => s.saveStatus)
   const importDialog = useStore((s) => s.importDialog)
 
   const file = files.find((f) => f.id === workspace.activeTab)
+  const course = courses.find((item) => item.id === file?.courseId)
   const page = file ? workspace.pages[file.id] ?? 1 : 0
 
   const readerRef = useRef<ImperativePanelHandle>(null)
@@ -32,9 +36,13 @@ export function Workspace () {
     <div className="workspace">
       <div className="ws-head">
         <div className="ws-path">
-          <span className="ws-crumb">学习空间</span>
+          <button type="button" className="ws-crumb" onClick={() => setView('courses')}>课程</button>
           {file ? (
             <>
+              <span className="ws-sep">/</span>
+              <button type="button" className="ws-crumb" onClick={() => openCourse(file.courseId)}>
+                {course?.name ?? '未归类'}
+              </button>
               <span className="ws-sep">/</span>
               <span className="ws-file">{file.name}</span>
               <span className="ws-page">

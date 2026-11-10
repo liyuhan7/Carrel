@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { useStore } from './store'
 import { TopBar } from './components/TopBar'
 import { HomePage } from './components/HomePage'
+import { CoursesPage } from './components/CoursesPage'
+import { CoursePage } from './components/CoursePage'
 import { LibraryPage } from './components/LibraryPage'
 import { NotesPage } from './components/NotesPage'
 import { Workspace } from './components/Workspace'
@@ -72,12 +74,17 @@ export default function App () {
         event.preventDefault()
         setDragging(false)
         const paths = Array.from(event.dataTransfer.files).map((file) => window.cs.pathForFile(file)).filter(Boolean)
-        if (paths.length) void useStore.getState().importPaths(paths)
+        if (paths.length) {
+          const state = useStore.getState()
+          void state.importPaths(paths, state.view === 'course' ? state.courseId : null)
+        }
       }}
     >
       <TopBar />
       <main className="view">
         {view === 'home' && <HomePage />}
+        {view === 'courses' && <CoursesPage />}
+        {view === 'course' && <CoursePage />}
         {view === 'workspace' && <Workspace />}
         {view === 'library' && <LibraryPage />}
         {view === 'notes' && <NotesPage />}

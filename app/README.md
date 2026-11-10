@@ -6,7 +6,7 @@ Electron 主进程 + React 渲染层的本地优先桌面应用。界面只负�
 
 | 层 | 位置 | 职责 |
 | --- | --- | --- |
-| 渲染层 | `src/` | React 19 + zustand：三栏布局、阅读器、笔记、资料库、设置 |
+| 渲染层 | `src/` | React 19 + zustand：三栏布局、阅读器、笔记、课程、资料库、设置 |
 | 预加载 | `electron/preload.cjs` | contextBridge 暴露的窗口 API；渲染层不开 nodeIntegration |
 | 主进程 | `electron/main.cjs` | 窗口、IPC、`app://` 协议、CSP、单实例、关闭前落盘 |
 | 存储 | `electron/store.cjs` | `state.json`、逐页文本、safeStorage 加密密钥 |
@@ -22,6 +22,13 @@ Electron 主进程 + React 渲染层的本地优先桌面应用。界面只负�
 3. `ai.mjs` 用 AI SDK 的 `streamText` 请求；增量走 `ai:delta`，结束 `ai:done`，异常 `ai:error`。
 4. 渲染层把整段文本交给 `parseAnswer`：抽走 `@cite` 行（页码写成 `p3` 或 `3` 都认），用 `locateQuote` 在已提取的页面文本里逐字比对；找到则标为已验证并记录页码，找不到标为「未核实」。`@cite` 行属于台账，不进回答正文，复制和整理到笔记时也不会带出。
 5. 消息、引用与阅读位置随状态持久化：写入防抖，关闭前补一次 flush。
+
+## 课程、会话与笔记
+
+- 课程是顶层容器；资料、会话、笔记各自记录 `courseId`，`null` 表示未归类。
+- 每份资料可以有多场会话；会话记录标题、范围、置顶与归档状态。打开资料时恢复包含该资料的最近会话，首条消息发出时才创建会话。
+- 旧版本的单条对话在启动时按资料拆成「历史对话」会话，消息内容不变；迁移只执行一次。
+- 统一索引按会话注册 `conversation` 资源，检索结果能定位到会话消息。
 
 ## 阅读与定位
 
@@ -53,7 +60,7 @@ Electron 主进程 + React 渲染层的本地优先桌面应用。界面只负�
 
 | 路径 | 内容 |
 | --- | --- |
-| `state.json` | 资料元信息、笔记、标注、对话、布局、阅读位置 |
+| `state.json` | 课程、资料元信息、会话与对话、笔记、标注、布局、阅读位置 |
 | `texts/<fileId>.json` | 逐页提取的文本 |
 | `secrets.json` | safeStorage 加密后的密钥与令牌 |
 
@@ -65,7 +72,7 @@ Electron 主进程 + React 渲染层的本地优先桌面应用。界面只负�
 npm run dev     # Vite + Electron 开发模式
 npm run build   # 复制 pdf.js 资源、tsc --noEmit、vite build
 npm start       # 以生产构建启动
-npm test        # 引文校验、模型提供商、笔记与阅读状态
+npm test        # 引文校验、模型提供商、笔记、阅读状态与课程迁移
 ```
 
 `scripts/assets.mjs` 把 pdf.js 的 cmaps 与标准字体复制到 `public/`；构建产物在 `dist/`，由 `app://` 协议加载。

@@ -2,22 +2,32 @@ import { useStore } from '../store'
 import { formatTime, greeting } from '../lib/format'
 import { TypeBadge } from './TypeBadge'
 import { FilePreview } from './FilePreview'
+import { courseNameOf } from './CourseSelect'
 
 const plain = (body: string) => body.replace(/[#>*`\n\-[\]()]/g, ' ').replace(/\s+/g, ' ').trim()
 
 export function HomePage () {
   const files = useStore((s) => s.files)
   const notes = useStore((s) => s.notes)
+  const courses = useStore((s) => s.courses)
+  const sessions = useStore((s) => s.sessions)
   const workspace = useStore((s) => s.workspace)
   const openFile = useStore((s) => s.openFile)
   const importDialog = useStore((s) => s.importDialog)
   const setView = useStore((s) => s.setView)
   const selectNote = useStore((s) => s.selectNote)
   const createNote = useStore((s) => s.createNote)
+  const openCourse = useStore((s) => s.openCourse)
+  const selectSession = useStore((s) => s.selectSession)
 
   const active = files.find((f) => f.id === workspace.activeTab)
+  const activeCourse = courses.find((course) => course.id === active?.courseId)
   const recentFiles = [...files].sort((a, b) => b.lastOpenedAt - a.lastOpenedAt).slice(0, 5)
   const recentNotes = [...notes].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 3)
+  const recentSessions = sessions
+    .filter((session) => !session.archivedAt)
+    .sort((a, b) => b.updatedAt - a.updatedAt)
+    .slice(0, 3)
   const page = active ? workspace.pages[active.id] ?? 1 : 1
   const progress = active ? Math.min(100, Math.round((page / (active.pageCount || 1)) * 100)) : 0
 
@@ -43,7 +53,7 @@ export function HomePage () {
             <p className="eyebrow">CONTINUE READING</p>
             <h2>{active.name}</h2>
             <p className="continue-meta">
-              第 {page} 页 / 共 {active.pageCount || 1} 页 · 上次读到 {formatTime(active.lastOpenedAt)}
+              {activeCourse ? `${activeCourse.name} · ` : ''}第 {page} 页 / 共 {active.pageCount || 1} 页 · 上次读到 {formatTime(active.lastOpenedAt)}
             </p>
             <div className="progress" role="progressbar" aria-valuenow={progress} aria-valuemin={0} aria-valuemax={100}>
               <span style={{ width: `${progress}%` }} />
@@ -71,28 +81,71 @@ export function HomePage () {
         </section>
       )}
 
-      <div className="home-grid">
-        <section className="section">
-          <div className="section-head">
-            <h3>最近资料</h3>
-            <button type="button" className="link" onClick={() => setView('library')}>
-              全部资料
-            </button>
+      <section className="section">
+        <div className="section-head">
+          <h3>我的课程</h3>
+          <button type="button" className="link" onClick={() => setView('courses')}>全部课程</button>
+        </div>
+        {courses.length === 0 ? (
+          <p className="muted">还没有课程。</p>
+        ) : (
+          <div className="chips">
+            {courses.filter((course) => !course.archivedAt).slice(0, 5).map((course) => (
+              <button key={course.id} type="button" title={course.name} onClick={() => openCourse(course.id)}>
+                {course.name}
+              </button>
+            ))}
+            <button type="button" onClick={() => setView('courses')}>＋</button>
           </div>
-          {recentFiles.length === 0 ? null : (
-            <ul className="file-list">
-              {recentFiles.map((file) => (
-                <li key={file.id}>
-                  <button type="button" className="file-row" onClick={() => void openFile(file.id)}>
-                    <TypeBadge kind={file.kind} ext={file.ext} />
-                    <span className="file-name">{file.name}</span>
-                    <span className="file-meta">{formatTime(file.lastOpenedAt)}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
+        )}
+      </section>
+
+      <div className="home-grid">
+        <div className="home-col">
+          <section className="section">
+            <div className="section-head">
+              <h3>最近资料</h3>
+              <button type="button" className="link" onClick={() => setView('library')}>
+                全部资料
+              </button>
+            </div>
+            {recentFiles.length === 0 ? null : (
+              <ul className="file-list">
+                {recentFiles.map((file) => (
+                  <li key={file.id}>
+                    <button type="button" className="file-row" onClick={() => void openFile(file.id)}>
+                      <TypeBadge kind={file.kind} ext={file.ext} />
+                      <span className="file-name">{file.name}</span>
+                      <span className="file-meta">{formatTime(file.lastOpenedAt)}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+
+          <section className="section">
+            <div className="section-head">
+              <h3>最近会话</h3>
+            </div>
+            {recentSessions.length === 0 ? (
+              <p className="muted">还没有会话。</p>
+            ) : (
+              <ul className="note-list-compact">
+                {recentSessions.map((session) => (
+                  <li key={session.id}>
+                    <button type="button" className="note-row" onClick={() => void selectSession(session.id)}>
+                      <span className="note-row-title">{session.title}</span>
+                      <span className="note-row-meta">
+                        {courseNameOf(session.courseId, courses)} · {formatTime(session.updatedAt)}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        </div>
 
         <aside className="section">
           <div className="section-head">

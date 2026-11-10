@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import type {
-  ActiveModel, AIMessage, ChatMessage, CredentialSource, DeviceCode, FileKind, FileRec,
-  Note, NoteRef, PersistedState, ProviderAuthState, ProviderConnection, Rect, RewriteState,
+  ActiveModel, AIMessage, ChatMessage, Course, CredentialSource, DeviceCode, FileKind, FileRec,
+  Note, NoteRef, PersistedState, ProviderAuthState, ProviderConnection, Rect, RewriteState, Session,
   SourceDetection, WorkspaceState
 } from './types'
 // >>> integration:course-reading-annotation
@@ -38,6 +38,7 @@ import {
 import { noteSessions } from './notes/session'
 import { createNoteInsertService, type NoteDocumentCommit } from './notes/insertService'
 import { ensureNoteState } from './notes/migrate'
+import { migrateCourseState } from './courses/migrate'
 import { revisionOf } from './notes/blocks'
 import {
   buildCaptureMarkdown, capturePlacement, captureTargetNoteId, sourceLabel, stripCiteMarkers
@@ -48,7 +49,7 @@ import type {
 } from './notes/contracts'
 // <<< integration:note-capture-editing
 
-export type View = 'home' | 'workspace' | 'library' | 'notes'
+export type View = 'home' | 'courses' | 'course' | 'workspace' | 'library' | 'notes'
 
 /** Extracted page text lives outside React state: it can be megabytes. */
 export const textCache = new Map<string, string[]>()
@@ -58,6 +59,8 @@ interface Toast { id: string; text: string; tone: 'info' | 'error' }
 interface Store extends PersistedState {
   hydrated: boolean
   view: View
+  /** Course shown by the course detail view; null is 未归类. */
+  courseId: string | null
   saveStatus: 'saved' | 'saving' | 'error'
   selection: {
     fileId: string
@@ -88,11 +91,28 @@ interface Store extends PersistedState {
   hydrate: () => Promise<void>
   openSettings: (connectionId?: string) => void
   closeSettings: () => void
-  importDialog: () => Promise<void>
+  importDialog: (courseId?: string | null) => Promise<void>
   setView: (view: View) => void
   notify: (text: string, tone?: 'info' | 'error') => void
 
-  importPaths: (paths: string[]) => Promise<void>
+  openCourse: (id: string | null) => void
+  createCourse: (name: string, term?: string) => string
+  renameCourse: (id: string, patch: Partial<Pick<Course, 'name' | 'term'>>) => void
+  archiveCourse: (id: string) => void
+  restoreCourse: (id: string) => void
+  deleteCourse: (id: string) => void
+  setFileCourse: (fileId: string, courseId: string | null) => void
+  setSessionCourse: (sessionId: string, courseId: string | null) => void
+  setNoteCourse: (noteId: string, courseId: string | null) => void
+  newSession: () => void
+  selectSession: (id: string) => Promise<void>
+  renameSession: (id: string, title: string) => void
+  toggleSessionPin: (id: string) => void
+  archiveSession: (id: string) => void
+  restoreSession: (id: string) => void
+  deleteSession: (id: string) => void
+
+  importPaths: (paths: string[], courseId?: string | null) => Promise<void>
   openFile: (id: string) => Promise<void>
   openFromLibrary: (id: string) => Promise<void>
   closeTab: (id: string) => void
@@ -125,7 +145,7 @@ interface Store extends PersistedState {
   setReadingState: (resourceId: string, patch: ReadingStatePatch) => void
   // <<< integration:course-reading-annotation
 
-  createNote: (title?: string) => string
+  createNote: (title?: string, courseId?: string | null, origin?: Note['origin']) => string
   selectNote: (id: string) => void
   updateNote: (id: string, patch: Partial<Pick<Note, 'title' | 'body'>>) => void
   deleteNote: (id: string) => void
@@ -229,6 +249,8 @@ function snapshot (state: Store): PersistedState {
   return {
     files: state.files,
     notes: state.notes,
+    courses: state.courses,
+    sessions: state.sessions,
     annotations: state.annotations,
     // >>> integration:course-reading-annotation
     legacyAnnotations: state.legacyAnnotations,
@@ -274,6 +296,9 @@ function withAuth (connection: ProviderConnection, auth?: ProviderAuthState): Pr
 }
 
 const REWRITE_PROMPT = '你是笔记编辑器。只改写用户给出的片段：保持原意与事实，保留 Markdown 结构，只输出改写后的片段本身，不要解释、不要加标题、不要代码块围栏。'
+
+/** Muted accents that belong to the existing paper palette. */
+const COURSE_COLORS = ['#4f6858', '#8a7443', '#665f7a', '#8a5f50', '#4f6a56', '#6b5733']
 
 export const useStore = create<Store>((set, get) => {
   /**
@@ -412,6 +437,8 @@ export const useStore = create<Store>((set, get) => {
   return {
     files: [],
     notes: [],
+    courses: [],
+    sessions: [],
     annotations: [],
     // >>> integration:course-reading-annotation
     legacyAnnotations: [],
@@ -436,7 +463,8 @@ export const useStore = create<Store>((set, get) => {
       activeNoteId: null,
       contextScope: 'selection',
       readerPanel: 'doc',
-      attachPageImage: false
+      attachPageImage: false,
+      activeSessionId: null
     },
     resourceRegistry,
     anchorService,
@@ -448,6 +476,7 @@ export const useStore = create<Store>((set, get) => {
     // <<< integration:course-reading-annotation
     hydrated: false,
     view: 'home',
+    courseId: null,
     saveStatus: 'saved',
     selection: null,
     focusQuote: null,
@@ -463,9 +492,9 @@ export const useStore = create<Store>((set, get) => {
 
     openSettings: (connectionId) => set({ settingsOpen: true, settingsConnection: connectionId ?? get().activeModel.connectionId }),
     closeSettings: () => set({ settingsOpen: false, settingsConnection: null }),
-    importDialog: async () => {
+    importDialog: async (courseId) => {
       const paths = await window.cs.pickFiles()
-      await get().importPaths(paths)
+      await get().importPaths(paths, courseId)
     },
 
     hydrate: async () => {
@@ -480,18 +509,30 @@ export const useStore = create<Store>((set, get) => {
           activeNoteId: null,
           contextScope: 'selection',
           readerPanel: 'doc',
-          attachPageImage: false
+          attachPageImage: false,
+          activeSessionId: null
         }
-        set({
+        const saved = state as unknown as { courses?: Course[]; sessions?: Session[] }
+        const migrated = migrateCourseState({
           files: state.files ?? [],
           notes: state.notes ?? [],
+          messages: state.messages ?? [],
+          workspace: { ...defaults, ...state.workspace },
+          courses: saved.courses,
+          sessions: saved.sessions
+        })
+        set({
+          files: migrated.files,
+          notes: migrated.notes,
+          courses: migrated.courses,
+          sessions: migrated.sessions,
           // >>> integration:course-reading-annotation
           // Raw records are staged here and migrated below; nothing is dropped.
           annotations: [],
           legacyAnnotations: (state as unknown as { legacyAnnotations?: LegacyAnnotationRecord[] }).legacyAnnotations ?? [],
           readingStates: (state as unknown as { readingStates?: Record<string, ReadingState> }).readingStates ?? {},
           // <<< integration:course-reading-annotation
-          messages: state.messages ?? [],
+          messages: migrated.messages,
           // >>> integration:note-capture-editing
           noteBlocks: state.noteBlocks ?? {},
           notePositions: state.notePositions ?? {},
@@ -500,11 +541,13 @@ export const useStore = create<Store>((set, get) => {
           resources: state.resources ?? {},
           anchors: state.anchors ?? {},
           links: state.links ?? {},
-          workspace: { ...defaults, ...state.workspace },
+          workspace: migrated.workspace,
           connections: connections.map((item) => withAuth(item, auth[item.id])),
           activeModel,
           hydrated: true
         })
+        // Persist the migrated courses/sessions once, so ids stay stable on next launch.
+        if (!Array.isArray(saved.courses) || migrated.sessions.length !== (saved.sessions?.length ?? 0)) persist(true)
         if (state.files.length) {
           const missing = await window.cs.missing(state.files.map((f) => f.path))
           set((s) => ({ files: s.files.map((f) => ({ ...f, missing: Boolean(missing[f.path]) })) }))
@@ -552,7 +595,9 @@ export const useStore = create<Store>((set, get) => {
           connections: DEFAULT_CONNECTIONS.map((item) => withAuth(item)),
           activeModel: DEFAULT_ACTIVE_MODEL,
           notes: [note],
-          workspace: { tabs: [], activeTab: null, pages: {}, zoom: 1, activeNoteId: note.id, contextScope: 'selection', readerPanel: 'doc', attachPageImage: false },
+          courses: [],
+          sessions: [],
+          workspace: { tabs: [], activeTab: null, pages: {}, zoom: 1, activeNoteId: note.id, contextScope: 'selection', readerPanel: 'doc', attachPageImage: false, activeSessionId: null },
           hydrated: true
         })
       }
@@ -589,12 +634,166 @@ export const useStore = create<Store>((set, get) => {
       setTimeout(() => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })), 2800)
     },
 
-    importPaths: async (paths) => {
+    openCourse: (id) => set({ courseId: id, view: 'course' }),
+
+    createCourse: (name, term) => {
+      const id = uid()
+      const course: Course = {
+        id,
+        name: name.trim(),
+        term: term?.trim() || undefined,
+        color: COURSE_COLORS[get().courses.length % COURSE_COLORS.length],
+        createdAt: Date.now()
+      }
+      set((s) => ({ courses: [...s.courses, course] }))
+      persist()
+      return id
+    },
+
+    renameCourse: (id, patch) => {
+      set((s) => ({
+        courses: s.courses.map((course) =>
+          course.id === id
+            ? { ...course, ...patch, name: (patch.name ?? course.name).trim() || course.name }
+            : course
+        )
+      }))
+      persist()
+    },
+
+    archiveCourse: (id) => {
+      set((s) => ({
+        courses: s.courses.map((course) => (course.id === id ? { ...course, archivedAt: Date.now() } : course))
+      }))
+      persist()
+    },
+
+    restoreCourse: (id) => {
+      set((s) => ({
+        courses: s.courses.map((course) => (course.id === id ? { ...course, archivedAt: undefined } : course))
+      }))
+      persist()
+    },
+
+    deleteCourse: (id) => {
+      const state = get()
+      const course = state.courses.find((item) => item.id === id)
+      if (!course) return
+      const used =
+        state.files.some((file) => file.courseId === id) ||
+        state.sessions.some((session) => session.courseId === id) ||
+        state.notes.some((note) => note.courseId === id)
+      // A course with content is only removable after it has been archived;
+      // its files, sessions and notes are released to 未归类, never deleted.
+      if (used && !course.archivedAt) {
+        state.notify('先归档课程，再删除', 'error')
+        return
+      }
+      set((s) => ({
+        courses: s.courses.filter((item) => item.id !== id),
+        files: s.files.map((file) => (file.courseId === id ? { ...file, courseId: null } : file)),
+        sessions: s.sessions.map((session) => (session.courseId === id ? { ...session, courseId: null } : session)),
+        notes: s.notes.map((note) => (note.courseId === id ? { ...note, courseId: null } : note)),
+        courseId: s.courseId === id ? null : s.courseId,
+        view: s.view === 'course' && s.courseId === id ? 'courses' : s.view
+      }))
+      persist()
+    },
+
+    setFileCourse: (fileId, courseId) => {
+      set((s) => ({ files: s.files.map((file) => (file.id === fileId ? { ...file, courseId } : file)) }))
+      persist()
+    },
+
+    setSessionCourse: (id, courseId) => {
+      set((s) => ({
+        sessions: s.sessions.map((session) => (session.id === id ? { ...session, courseId } : session))
+      }))
+      persist()
+    },
+
+    setNoteCourse: (id, courseId) => {
+      set((s) => ({ notes: s.notes.map((note) => (note.id === id ? { ...note, courseId } : note)) }))
+      persist()
+    },
+
+    newSession: () => {
+      if (get().streaming) {
+        get().notify('正在生成回答，结束后再新建会话', 'error')
+        return
+      }
+      set((s) => ({ workspace: { ...s.workspace, activeSessionId: null } }))
+      persist()
+    },
+
+    selectSession: async (id) => {
+      const session = get().sessions.find((item) => item.id === id)
+      if (!session) return
+      const fileId = session.lastFileId && session.scopeFileIds.includes(session.lastFileId)
+        ? session.lastFileId
+        : session.scopeFileIds[0]
+      if (fileId) {
+        try {
+          await get().openFile(fileId)
+        } catch {
+          get().notify('无法打开会话关联的资料', 'error')
+        }
+      }
+      set((s) => ({ view: 'workspace', workspace: { ...s.workspace, activeSessionId: id } }))
+      persist()
+    },
+
+    renameSession: (id, title) => {
+      const next = title.trim()
+      if (!next) return
+      set((s) => ({ sessions: s.sessions.map((session) => (session.id === id ? { ...session, title: next } : session)) }))
+      persist()
+    },
+
+    toggleSessionPin: (id) => {
+      set((s) => ({
+        sessions: s.sessions.map((session) =>
+          session.id === id ? { ...session, pinned: !session.pinned } : session
+        )
+      }))
+      persist()
+    },
+
+    archiveSession: (id) => {
+      set((s) => ({
+        sessions: s.sessions.map((session) =>
+          session.id === id ? { ...session, archivedAt: Date.now() } : session
+        ),
+        workspace: s.workspace.activeSessionId === id ? { ...s.workspace, activeSessionId: null } : s.workspace
+      }))
+      persist()
+    },
+
+    restoreSession: (id) => {
+      set((s) => ({
+        sessions: s.sessions.map((session) =>
+          session.id === id ? { ...session, archivedAt: undefined } : session
+        )
+      }))
+      persist()
+    },
+
+    deleteSession: (id) => {
+      set((s) => ({
+        sessions: s.sessions.filter((session) => session.id !== id),
+        messages: s.messages.filter((message) => message.sessionId !== id),
+        workspace: s.workspace.activeSessionId === id ? { ...s.workspace, activeSessionId: null } : s.workspace
+      }))
+      persist()
+    },
+
+    importPaths: async (paths, courseId = null) => {
       if (!paths.length) return
       const opened: string[] = []
       for (const filePath of paths) {
         const existing = get().files.find((f) => f.path === filePath)
         if (existing) {
+          if (courseId && !existing.courseId) get().setFileCourse(existing.id, courseId)
           opened.push(existing.id)
           continue
         }
@@ -613,7 +812,8 @@ export const useStore = create<Store>((set, get) => {
             addedAt: Date.now(),
             lastOpenedAt: Date.now(),
             pageCount: 0,
-            favorite: false
+            favorite: false,
+            courseId
           }
           if (kind === 'pdf') {
             get().notify(`正在解析 ${info.name}`)
@@ -683,6 +883,14 @@ export const useStore = create<Store>((set, get) => {
       // >>> integration:course-reading-annotation
       await get().ensureFileResource(id)
       // <<< integration:course-reading-annotation
+      // Keep the open session when it still covers this file; otherwise pick
+      // the newest one, even if it was filed under another course.
+      const current = get().sessions.find((item) => item.id === get().workspace.activeSessionId)
+      const session = current && !current.archivedAt && current.scopeFileIds.includes(id)
+        ? current
+        : get().sessions
+            .filter((item) => !item.archivedAt && item.scopeFileIds.includes(id))
+            .sort((a, b) => b.updatedAt - a.updatedAt)[0]
       set((s) => {
         const tabs = s.workspace.tabs.includes(id) ? s.workspace.tabs : [...s.workspace.tabs, id]
         return {
@@ -691,6 +899,7 @@ export const useStore = create<Store>((set, get) => {
             ...s.workspace,
             tabs,
             activeTab: id,
+            activeSessionId: session?.id ?? null,
             pages: { ...s.workspace.pages, [id]: s.workspace.pages[id] ?? 1 }
           },
           files: s.files.map((f) => (f.id === id ? { ...f, lastOpenedAt: Date.now() } : f))
@@ -793,8 +1002,12 @@ export const useStore = create<Store>((set, get) => {
     },
 
     removeFile: (id) => {
+      const archived = get().sessions.filter((session) => session.scopeFileIds.includes(id)).map((session) => session.id)
       set((s) => ({
         files: s.files.filter((f) => f.id !== id),
+        sessions: s.sessions.map((session) =>
+          session.scopeFileIds.includes(id) ? { ...session, archivedAt: session.archivedAt ?? Date.now() } : session
+        ),
         // >>> integration:course-reading-annotation
         annotations: s.annotations.filter((a) => {
           const resource = s.resources[a.resourceId]
@@ -803,6 +1016,7 @@ export const useStore = create<Store>((set, get) => {
         // <<< integration:course-reading-annotation
         workspace: {
           ...s.workspace,
+          activeSessionId: archived.includes(s.workspace.activeSessionId ?? '') ? null : s.workspace.activeSessionId,
           tabs: s.workspace.tabs.filter((t) => t !== id),
           activeTab: s.workspace.activeTab === id ? s.workspace.tabs.filter((t) => t !== id).pop() ?? null : s.workspace.activeTab
         }
@@ -915,9 +1129,9 @@ export const useStore = create<Store>((set, get) => {
     // <<< integration:course-reading-annotation
 
     // >>> integration:note-capture-editing
-    createNote: (title = '未命名笔记') => {
+    createNote: (title = '未命名笔记', courseId = null, origin) => {
       const now = Date.now()
-      const note: Note = { id: uid(), title, body: '', refs: [], createdAt: now, updatedAt: now }
+      const note: Note = { id: uid(), title, body: '', refs: [], createdAt: now, updatedAt: now, courseId, origin }
       set((s) => ({
         notes: [note, ...s.notes],
         workspace: { ...s.workspace, activeNoteId: note.id, noteTabs: nextTabs(s.workspace.noteTabs, note.id) },
@@ -1167,6 +1381,22 @@ export const useStore = create<Store>((set, get) => {
       const file = get().files.find((f) => f.id === message.fileId) ?? get().files.find((f) => f.id === get().workspace.activeTab)
       const targetId = captureTargetNoteId(get().notes, get().workspace.activeNoteId, useNoteUi.getState().lastTargetNoteId)
       if (!targetId) return
+      const session = get().sessions.find((item) => item.id === message.sessionId)
+      const targetNote = get().notes.find((item) => item.id === targetId)
+      if (session?.courseId && targetNote && !targetNote.courseId) {
+        set((s) => ({
+          notes: s.notes.map((note) =>
+            note.id === targetId
+              ? {
+                  ...note,
+                  courseId: session.courseId,
+                  origin: note.origin ?? { sessionId: session.id, fileId: message.fileId, page: message.page }
+                }
+              : note
+          )
+        }))
+        persist()
+      }
       const body = stripCiteMarkers(message.content)
       const citations = (message.citations ?? []).filter((citation) => citation.verified)
       const sourceLine = citations.length && file
@@ -1460,6 +1690,19 @@ export const useStore = create<Store>((set, get) => {
       // >>> integration:course-reading-annotation
       const selectionDraft = selection?.draft ?? null
       // <<< integration:course-reading-annotation
+      const now = Date.now()
+      const current = state.sessions.find((item) => item.id === state.workspace.activeSessionId)
+      const session: Session = current && !current.archivedAt && current.scopeFileIds.includes(file.id)
+        ? current
+        : {
+            id: uid(),
+            courseId: file.courseId,
+            scopeFileIds: [file.id],
+            lastFileId: file.id,
+            title: sessionTitle(trimmed),
+            createdAt: now,
+            updatedAt: now
+          }
       const scope = state.workspace.contextScope
       const { contextText, label } = buildContext({ file, page, pages, scope, selection })
       const wantsImage = supportsImage(model) && state.workspace.attachPageImage && file.kind === 'pdf'
@@ -1472,7 +1715,7 @@ export const useStore = create<Store>((set, get) => {
         }
       }
       const history = state.messages
-        .filter((m) => m.content.trim() && m.status !== 'error')
+        .filter((m) => m.sessionId === session.id && m.content.trim() && m.status !== 'error')
         .slice(-6)
         .map((m) => ({ role: m.role, content: m.content }))
 
@@ -1481,6 +1724,7 @@ export const useStore = create<Store>((set, get) => {
         role: 'user',
         content: trimmed,
         createdAt: Date.now(),
+        sessionId: session.id,
         contextLabel: image ? `${label} · 含本页截图` : label,
         fileId: file.id,
         page
@@ -1490,6 +1734,7 @@ export const useStore = create<Store>((set, get) => {
         role: 'assistant',
         content: '',
         createdAt: Date.now(),
+        sessionId: session.id,
         status: 'streaming',
         providerName: connection.name,
         model: model.modelId,
@@ -1499,6 +1744,10 @@ export const useStore = create<Store>((set, get) => {
       }
       const reqId = uid()
       set((s) => ({
+        sessions: s.sessions.some((item) => item.id === session.id)
+          ? s.sessions.map((item) => (item.id === session.id ? { ...item, updatedAt: now, lastFileId: file.id } : item))
+          : [...s.sessions, session],
+        workspace: { ...s.workspace, activeSessionId: session.id },
         messages: [...s.messages, userMessage, assistant],
         streaming: { reqId, messageId: assistant.id },
         selection: null
@@ -1521,7 +1770,7 @@ export const useStore = create<Store>((set, get) => {
       if (started && selectionDraft) {
         try {
           await createAsksAboutLink(
-            { selection: selectionDraft, messageId: userMessage.id },
+            { selection: selectionDraft, messageId: userMessage.id, conversationId: session.id },
             {
               transactions,
               anchorService,
@@ -1574,7 +1823,7 @@ export const useStore = create<Store>((set, get) => {
 
       if (event.type === 'done') {
         const message = get().messages.find((m) => m.id === streaming.messageId)
-        const file = get().files.find((f) => f.id === get().workspace.activeTab)
+        const file = get().files.find((f) => f.id === (message?.fileId ?? get().workspace.activeTab))
         const pages = file ? textCache.get(file.id) ?? [] : []
         const raw = event.text ?? message?.content ?? ''
         const parsed = parseAnswer(raw, pages)
@@ -1615,6 +1864,12 @@ export const useStore = create<Store>((set, get) => {
     // <<< integration:unified-content-index
   }
 })
+
+function sessionTitle (question: string): string {
+  const text = question.replace(/\s+/g, ' ').trim()
+  if (!text) return '新会话'
+  return text.length > 24 ? `${text.slice(0, 24)}…` : text
+}
 
 function buildContext ({ file, page, pages, scope, selection }: {
   file: FileRec

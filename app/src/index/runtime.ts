@@ -19,6 +19,7 @@ import { createRelationIndex, type RelationIndex } from './relations.ts'
 import { createSearchService, type IndexSearchService } from './search.ts'
 import { syncResourceRegistry } from './resourceSync.ts'
 import { migrateLegacyRefs } from './migrationRuntime.ts'
+import { MAIN_CONVERSATION_ID } from './resources.ts'
 import { markdownBlocks, messageUnits, noteBlockUnits, pageUnits } from './units.ts'
 
 export interface IndexRuntime {
@@ -73,6 +74,7 @@ function buildRuntime(): IndexRuntime {
       resources: state.resources,
       files: state.files,
       notes: state.notes,
+      sessions: state.sessions,
       messages: state.messages
     })
 
@@ -166,7 +168,10 @@ async function extractUnits(
     return pageUnits(resource.id, resource.revision, pages)
   }
   if (resource.kind === 'conversation') {
-    return messageUnits(resource.id, resource.revision, messages)
+    const sessionMessages = messages.filter(
+      (message) => (message.sessionId || MAIN_CONVERSATION_ID) === resource.sourceId
+    )
+    return messageUnits(resource.id, resource.revision, sessionMessages)
   }
   const note = notes.find((item) => item.id === resource.sourceId)
   if (!note) throw new Error('笔记内容不可访问')
@@ -193,6 +198,7 @@ export function useIndexRuntime(): void {
       const changed =
         state.files !== previous.files ||
         state.notes !== previous.notes ||
+        state.sessions !== previous.sessions ||
         state.messages !== previous.messages ||
         state.resources !== previous.resources ||
         state.hydrated !== previous.hydrated
@@ -225,7 +231,9 @@ export async function openSearchResult(result: SearchResult): Promise<void> {
     state.setView('notes')
     return
   }
-  state.setView('workspace')
+  const session = state.sessions.find((item) => item.id === resource.sourceId)
+  if (session) await state.selectSession(session.id)
+  else state.setView('workspace')
   if (result.locator.type === 'message' && result.locator.messageId) {
     state.focusMessage(result.locator.messageId)
   }

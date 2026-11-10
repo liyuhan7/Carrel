@@ -28,13 +28,13 @@ export interface AsksAboutDeps {
 }
 
 export async function createAsksAboutLink (
-  input: { selection: SelectionDraft; messageId: string },
+  input: { selection: SelectionDraft; messageId: string; conversationId?: string },
   deps: AsksAboutDeps
 ): Promise<ContentLink> {
   if (!input.selection || !input.messageId) throw new Error('缺少选区或消息标识')
   const conversation = await deps.resourceRegistry.ensureResource({
     kind: 'conversation',
-    sourceId: MAIN_CONVERSATION_SOURCE_ID
+    sourceId: input.conversationId ?? MAIN_CONVERSATION_SOURCE_ID
   })
   const now = deps.now()
   const linkId = deps.nextId()

@@ -5,8 +5,8 @@ import { useIndexUi } from '../index/uiState'
 
 const ITEMS = [
   { id: 'home', label: '首页' },
-  { id: 'workspace', label: '学习空间' },
-  { id: 'library', label: '资料库' },
+  { id: 'courses', label: '课程' },
+  { id: 'library', label: '资料' },
   { id: 'notes', label: '笔记' }
 ] as const
 
@@ -29,7 +29,12 @@ export function TopBar () {
 
       <nav className="nav" aria-label="主导航">
         {ITEMS.map((item) => (
-          <button key={item.id} type="button" aria-current={view === item.id ? 'page' : undefined} onClick={() => setView(item.id)}>
+          <button
+            key={item.id}
+            type="button"
+            aria-current={(view === 'course' ? 'courses' : view) === item.id ? 'page' : undefined}
+            onClick={() => setView(item.id)}
+          >
             {item.label}
           </button>
         ))}

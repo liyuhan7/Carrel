@@ -3,6 +3,7 @@ import { useStore } from '../store'
 import type { Note } from '../types'
 import { renderNote } from '../lib/markdown'
 import { truncate } from '../lib/format'
+import { CourseSelect } from './CourseSelect'
 // >>> integration:note-capture-editing
 import { noteSessions } from '../notes/session'
 import { sourceStatus, type SourceStatusInput } from '../notes/sourceStatus'
@@ -13,6 +14,7 @@ import { useNoteUi } from '../notes/ui'
 export function NoteEditor ({ note, variant }: { note: Note; variant: 'pane' | 'page' }) {
   const updateNote = useStore((s) => s.updateNote)
   const deleteNote = useStore((s) => s.deleteNote)
+  const setNoteCourse = useStore((s) => s.setNoteCourse)
   const files = useStore((s) => s.files)
   const openFile = useStore((s) => s.openFile)
   const setPage = useStore((s) => s.setPage)
@@ -265,6 +267,11 @@ export function NoteEditor ({ note, variant }: { note: Note; variant: 'pane' | '
           ref={titleRef}
           // <<< integration:note-capture-editing
           onChange={(event) => updateNote(note.id, { title: event.target.value })}
+        />
+        <CourseSelect
+          value={note.courseId}
+          onChange={(courseId) => setNoteCourse(note.id, courseId)}
+          className="note-course"
         />
         <div className="note-menu" ref={menuRef}>
           <button

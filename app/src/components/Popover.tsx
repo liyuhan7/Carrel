@@ -1,10 +1,12 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 
-export function Popover ({ trigger, children, align = 'left', width = 240 }: {
+export function Popover ({ trigger, children, align = 'left', width = 240, dismissOnClick = false }: {
   trigger: (open: boolean) => ReactNode
   children: ReactNode
   align?: 'left' | 'right'
   width?: number
+  /** Close after a click inside, except on inputs or elements marked data-keep-open. */
+  dismissOnClick?: boolean
 }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -45,7 +47,19 @@ export function Popover ({ trigger, children, align = 'left', width = 240 }: {
         {trigger(open)}
       </button>
       {open && (
-        <div ref={menuRef} className={`popover popover-${align}`} style={{ width }} role="menu">
+        <div
+          ref={menuRef}
+          className={`popover popover-${align}`}
+          style={{ width }}
+          role="menu"
+          onClick={(event) => {
+            if (!dismissOnClick) return
+            const target = event.target as HTMLElement
+            if (target.closest('input, textarea, [data-keep-open]')) return
+            // Defer so the row's own click handler runs before the menu unmounts.
+            setTimeout(() => setOpen(false), 0)
+          }}
+        >
           {children}
         </div>
       )}

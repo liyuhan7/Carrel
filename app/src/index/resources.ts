@@ -3,10 +3,10 @@
 // one shared transaction.
 
 import type { Resource, ResourceKind } from '../shared/contracts/content'
-import type { ChatMessage, FileRec, Note } from '../types'
+import type { ChatMessage, FileRec, Note, Session } from '../types'
 import { derivedId, hashString } from './text.ts'
 
-/** The app currently keeps a single AI session; messages are located by id. */
+/** id used by the pre-session build and by callers that have no session yet. */
 export const MAIN_CONVERSATION_ID = 'main'
 export const CONVERSATION_TITLE = 'AI 学习会话'
 
@@ -29,14 +29,15 @@ export function conversationRevision(messages: ChatMessage[]): string {
   return `c:${hashString(fingerprint)}`
 }
 
-export function conversationResourceId(): string {
-  return resourceIdFor('conversation', MAIN_CONVERSATION_ID)
+export function conversationResourceId(sessionId: string = MAIN_CONVERSATION_ID): string {
+  return resourceIdFor('conversation', sessionId)
 }
 
 export interface ResourceSyncInput {
   resources: Record<string, Resource>
   files: FileRec[]
   notes: Note[]
+  sessions?: Session[]
   messages: ChatMessage[]
   now?: number
 }
@@ -112,15 +113,23 @@ export function planResourceSync(input: ResourceSyncInput): ResourceSyncPlan {
   for (const note of input.notes) {
     upsert('note', note.id, note.title || '未命名笔记', noteRevision(note), 'available')
   }
-  const hasConversation = input.messages.length > 0 || Boolean(existing.get(`conversation|${MAIN_CONVERSATION_ID}`))
-  if (hasConversation) {
-    upsert(
-      'conversation',
-      MAIN_CONVERSATION_ID,
-      CONVERSATION_TITLE,
-      conversationRevision(input.messages),
-      'available'
-    )
+  const conversationGroups = new Map<string, ChatMessage[]>()
+  for (const message of input.messages) {
+    const sessionId = message.sessionId || MAIN_CONVERSATION_ID
+    const list = conversationGroups.get(sessionId)
+    if (list) list.push(message)
+    else conversationGroups.set(sessionId, [message])
+  }
+  const knownSessions = new Set<string>()
+  for (const session of input.sessions ?? []) {
+    knownSessions.add(session.id)
+    const messages = conversationGroups.get(session.id) ?? []
+    if (!messages.length && !existing.get(`conversation|${session.id}`)) continue
+    upsert('conversation', session.id, session.title || CONVERSATION_TITLE, conversationRevision(messages), 'available')
+  }
+  for (const [sessionId, messages] of conversationGroups) {
+    if (knownSessions.has(sessionId) || !messages.length) continue
+    upsert('conversation', sessionId, CONVERSATION_TITLE, conversationRevision(messages), 'available')
   }
 
   // A registered resource whose source disappeared keeps its identity but is

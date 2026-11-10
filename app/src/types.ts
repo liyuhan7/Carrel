@@ -9,6 +9,30 @@ import type { LegacyAnnotationRecord } from './reader/migrate'
 
 export type FileKind = 'pdf' | 'md' | 'image' | 'other'
 
+/** A course is the top-level container; null on a file means 未归类. */
+export interface Course {
+  id: string
+  name: string
+  term?: string
+  color: string
+  createdAt: number
+  archivedAt?: number
+}
+
+/** One chat thread inside a course. P0 scopes it to a single document. */
+export interface Session {
+  id: string
+  courseId: string | null
+  scopeFileIds: string[]
+  /** Document to reopen when the session is selected. */
+  lastFileId: string | null
+  title: string
+  pinned?: boolean
+  createdAt: number
+  updatedAt: number
+  archivedAt?: number
+}
+
 export interface FileRec {
   id: string
   name: string
@@ -22,6 +46,7 @@ export interface FileRec {
   lastOpenedAt: number
   pageCount: number
   favorite: boolean
+  courseId: string | null
   changed?: boolean
   missing?: boolean
 }
@@ -59,6 +84,10 @@ export interface Note {
   refs: NoteRef[]
   createdAt: number
   updatedAt: number
+  /** Optional course; null or undefined means an independent note. */
+  courseId?: string | null
+  /** Source when the note was created from a session. */
+  origin?: { sessionId?: string; fileId?: string; page?: number }
 }
 
 export interface Citation {
@@ -75,6 +104,7 @@ export interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
   createdAt: number
+  sessionId: string
   citations?: Citation[]
   status?: MessageStatus
   providerName?: string
@@ -294,6 +324,8 @@ export interface WorkspaceState {
   readerPanel: 'doc' | 'ann'
   /** Send a rendered page image along with the text when the model accepts it. */
   attachPageImage: boolean
+  /** null while composing a new session; set once the first message is sent. */
+  activeSessionId: string | null
   // >>> integration:note-capture-editing
   /** Recent note tabs, least recently used first; capped at five. */
   noteTabs?: string[]
@@ -310,6 +342,8 @@ export interface TrashedNote extends Note {
 export interface PersistedState {
   files: FileRec[]
   notes: Note[]
+  courses: Course[]
+  sessions: Session[]
   // >>> integration:course-reading-annotation
   /** Anchor-backed annotations (shared/contracts/reader.ts). */
   annotations: ReaderAnnotation[]

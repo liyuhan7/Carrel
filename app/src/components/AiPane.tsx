@@ -4,8 +4,9 @@ import type { ChatMessage, ContextScope } from '../types'
 import { activeRoute, authReady, modelOptions, supportsImage } from '../lib/providers'
 import { renderAnswer } from '../lib/markdown'
 import { Popover } from './Popover'
+import { courseNameOf } from './CourseSelect'
 // >>> integration:note-capture-editing
-import { uid } from '../lib/format'
+import { formatTime, uid } from '../lib/format'
 import { capturePlacement, captureTargetNoteId, stripCiteMarkers } from '../notes/capture'
 import { CaptureDraftPanel } from '../notes/CaptureDraftPanel'
 import { useNoteUi } from '../notes/ui'
@@ -29,10 +30,14 @@ export function AiPane ({ collapsed, onExpand, onCollapse }: {
   const activeModel = useStore((s) => s.activeModel)
   const workspace = useStore((s) => s.workspace)
   const files = useStore((s) => s.files)
+  const sessions = useStore((s) => s.sessions)
+  const courses = useStore((s) => s.courses)
   const selection = useStore((s) => s.selection)
   const composerFocus = useStore((s) => s.composerFocus)
   const sendQuestion = useStore((s) => s.sendQuestion)
   const stopAnswer = useStore((s) => s.stopAnswer)
+  const newSession = useStore((s) => s.newSession)
+  const selectSession = useStore((s) => s.selectSession)
   const setContextScope = useStore((s) => s.setContextScope)
   const setActiveModel = useStore((s) => s.setActiveModel)
   const setAttachPageImage = useStore((s) => s.setAttachPageImage)
@@ -40,6 +45,7 @@ export function AiPane ({ collapsed, onExpand, onCollapse }: {
   const openSettings = useStore((s) => s.openSettings)
 
   const [input, setInput] = useState('')
+  const [sessionQuery, setSessionQuery] = useState('')
   const listRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
@@ -49,7 +55,20 @@ export function AiPane ({ collapsed, onExpand, onCollapse }: {
   // Only configured services belong in the picker; the rest are set up from 设置 → 模型服务.
   const options = modelOptions(connections.filter((connection) => authReady(connection)))
   const scope = workspace.contextScope
-  const last = messages[messages.length - 1]
+  const activeSession = sessions.find((session) => session.id === workspace.activeSessionId)
+  const courseSessions = activeFile
+    ? sessions
+        .filter((session) => !session.archivedAt && session.scopeFileIds.includes(activeFile.id))
+        .sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) || b.updatedAt - a.updatedAt)
+    : []
+  const keyword = sessionQuery.trim().toLowerCase()
+  const visibleSessions = keyword
+    ? courseSessions.filter((session) => session.title.toLowerCase().includes(keyword))
+    : courseSessions
+  const thread = workspace.activeSessionId
+    ? messages.filter((message) => message.sessionId === workspace.activeSessionId)
+    : []
+  const last = thread[thread.length - 1]
 
   useEffect(() => {
     if (composerFocus > 0) inputRef.current?.focus()
@@ -60,7 +79,7 @@ export function AiPane ({ collapsed, onExpand, onCollapse }: {
     if (!list) return
     const nearBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 160
     if (nearBottom) list.scrollTop = list.scrollHeight
-  }, [last?.content, messages.length])
+  }, [last?.content, thread.length])
 
   const send = () => {
     const question = input.trim()
@@ -124,6 +143,52 @@ export function AiPane ({ collapsed, onExpand, onCollapse }: {
         </button>
       </div>
 
+      <div className="session-strip">
+        <span className="context-label">会话</span>
+        <Popover
+          align="left"
+          width={340}
+          dismissOnClick
+          trigger={() => (
+            <span className="session-chip">
+              <span className="session-chip-title">{activeSession?.title ?? '新会话'}</span>
+              <span aria-hidden="true">▾</span>
+            </span>
+          )}
+        >
+          <button type="button" className="menu-item" onClick={() => newSession()}>
+            <span className="menu-name">新建会话</span>
+            <span className="menu-meta">＋</span>
+          </button>
+          <div className="menu-sep" />
+          <input
+            className="session-search"
+            value={sessionQuery}
+            onChange={(event) => setSessionQuery(event.target.value)}
+            placeholder="搜索会话"
+            aria-label="搜索会话"
+          />
+          {visibleSessions.length === 0 ? (
+            <p className="menu-group">还没有会话</p>
+          ) : (
+            visibleSessions.map((session) => (
+              <button
+                key={session.id}
+                type="button"
+                className={`menu-item session-menu-item${session.id === workspace.activeSessionId ? ' is-active' : ''}`}
+                onClick={() => void selectSession(session.id)}
+              >
+                <span className="menu-name">{session.pinned ? '· ' : ''}{session.title}</span>
+                <span className="menu-meta">{courseNameOf(session.courseId, courses)} · {formatTime(session.updatedAt)}</span>
+              </button>
+            ))
+          )}
+        </Popover>
+        <button type="button" className="icon-btn" title="新建会话" onClick={() => newSession()}>
+          ＋
+        </button>
+      </div>
+
       <div className="context-strip">
         <span className="context-label">上下文</span>
         <span className="context-value">
@@ -146,7 +211,7 @@ export function AiPane ({ collapsed, onExpand, onCollapse }: {
       </div>
 
       <div className="chat" ref={listRef}>
-        {messages.length === 0 ? (
+        {thread.length === 0 ? (
           <div className="chat-empty">
             <div className="suggestions">
               {['解释这一页的核心概念', '这一页有哪些容易混淆的地方', '帮我总结本页要点'].map((question) => (
@@ -157,7 +222,7 @@ export function AiPane ({ collapsed, onExpand, onCollapse }: {
             </div>
           </div>
         ) : (
-          messages.map((message) => <Message key={message.id} message={message} />)
+          thread.map((message) => <Message key={message.id} message={message} />)
         )}
       </div>
 
@@ -301,7 +366,7 @@ function Message ({ message }: { message: ChatMessage }) {
       notify('先新建一份笔记', 'error')
       return
     }
-    const conversation = await state.ensureResource({ kind: 'conversation', sourceId: 'chat', title: 'AI 学习助手' })
+    const conversation = await state.ensureResource({ kind: 'conversation', sourceId: message.sessionId, title: 'AI 学习会话' })
     const candidates: NoteSourceCandidate[] = [{
       resourceId: conversation.id,
       selector: { type: 'message', messageId: message.id, quote: { exact: text } },
@@ -356,6 +421,23 @@ function Message ({ message }: { message: ChatMessage }) {
           {/* >>> integration:note-capture-editing */}
           <button type="button" className="link" onClick={() => void startDraft(selectedText || message.content)}>
             {selectedText ? '整理选中片段到笔记' : '整理到笔记'}
+          </button>
+          <button
+            type="button"
+            className="link"
+            onClick={() => {
+              const state = useStore.getState()
+              const session = state.sessions.find((item) => item.id === message.sessionId)
+              const noteId = state.createNote(
+                session?.title ?? '会话笔记',
+                session?.courseId ?? null,
+                { sessionId: message.sessionId, fileId: message.fileId, page: message.page }
+              )
+              useNoteUi.getState().setTargetNote(noteId)
+              state.insertAnswerToNote(message.id)
+            }}
+          >
+            存为新笔记
           </button>
           {selectedText ? (
             <button type="button" className="link" onClick={() => setSelectedText('')}>

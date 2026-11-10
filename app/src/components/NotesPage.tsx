@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { useStore } from '../store'
 import { NoteEditor } from './NoteEditor'
 import { formatTime, truncate } from '../lib/format'
+import { courseNameOf } from './CourseSelect'
 // >>> integration:note-capture-editing
 import { NoteModuleHost, NoteTabs } from '../notes/NoteModuleHost'
 // <<< integration:note-capture-editing
@@ -10,18 +11,23 @@ const plain = (body: string) => body.replace(/[#>*`\n\-[\]()]/g, ' ').replace(/\
 
 export function NotesPage () {
   const notes = useStore((s) => s.notes)
+  const courses = useStore((s) => s.courses)
   const activeNoteId = useStore((s) => s.workspace.activeNoteId)
   const selectNote = useStore((s) => s.selectNote)
   const createNote = useStore((s) => s.createNote)
   const [query, setQuery] = useState('')
+  const [course, setCourse] = useState('all')
 
   const active = notes.find((note) => note.id === activeNoteId) ?? notes[0]
   const filtered = useMemo(() => {
     const keyword = query.trim().toLowerCase()
     return [...notes]
-      .filter((note) => !keyword || note.title.toLowerCase().includes(keyword) || note.body.toLowerCase().includes(keyword))
+      .filter((note) =>
+        (course === 'all' || (course === 'independent' ? !note.courseId : note.courseId === course)) &&
+        (!keyword || note.title.toLowerCase().includes(keyword) || note.body.toLowerCase().includes(keyword))
+      )
       .sort((a, b) => b.updatedAt - a.updatedAt)
-  }, [notes, query])
+  }, [notes, query, course])
 
   return (
     <div className="page notes-page">
@@ -48,6 +54,18 @@ export function NotesPage () {
 
       <div className="notes-layout">
         <aside className="notes-list">
+          <select
+            className="select notes-filter"
+            value={course}
+            aria-label="按课程筛选"
+            onChange={(event) => setCourse(event.target.value)}
+          >
+            <option value="all">全部笔记</option>
+            <option value="independent">独立笔记</option>
+            {courses.map((item) => (
+              <option key={item.id} value={item.id}>{item.name}</option>
+            ))}
+          </select>
           <label className="search">
             <span aria-hidden="true">⌕</span>
             <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索笔记" aria-label="搜索笔记" />
@@ -63,6 +81,7 @@ export function NotesPage () {
                   <span className="item-title">{note.title || '未命名笔记'}</span>
                   <span className="item-excerpt">{truncate(plain(note.body), 56) || '空笔记'}</span>
                   <span className="item-meta">
+                    {note.courseId ? `${courseNameOf(note.courseId, courses)} · ` : ''}
                     {formatTime(note.updatedAt)}
                     {note.refs.length > 0 ? ` · ${note.refs.length} 个来源` : ''}
                   </span>
